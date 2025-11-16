@@ -11,25 +11,25 @@
       "type": "custom",
       "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
     },
-    "keyvaliumm_backend": {
-      "main": "src/keyvaliumm_backend/main.mo",
+    "kv_backend": {
+      "main": "src/kv_backend/main.mo",
       "type": "motoko"
     },
-    "keyvaliumm_frontend": {
+    "frontend": {
       "dependencies": [
-        "keyvaliumm_backend"
+        "kv_backend"
       ],
       "source": [
-        "src/keyvaliumm_frontend/dist"
+        "src/frontend/dist"
       ],
       "type": "assets",
-      "workspace": "keyvaliumm_frontend"
+      "workspace": "frontend"
     }
   },
   "defaults": {
     "build": {
       "args": "",
-      "packtool": ""
+      "packtool": "mops sources"
     }
   },
   "output_env_file": ".env",

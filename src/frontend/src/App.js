@@ -1,5 +1,5 @@
 import { html, render } from 'lit-html';
-import { keyvaliumm_backend } from 'declarations/keyvaliumm_backend';
+import { kv_backend } from 'declarations/kv_backend';
 import logo from './logo2.svg';
 
 class App {
@@ -11,8 +11,9 @@ class App {
 
   #handleSubmit = async (e) => {
     e.preventDefault();
+    console.log('peepee');
     const name = document.getElementById('name').value;
-    this.greeting = await keyvaliumm_backend.greet(name);
+    this.greeting = await kv_backend.greet(name);
     this.#render();
   };
 

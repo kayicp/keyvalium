@@ -1,0 +1,5 @@
+[dependencies]
+base = "0.16.0"
+core = "1.0.0"
+sha2 = "0.1.9"
+leb128 = "1.1.0"

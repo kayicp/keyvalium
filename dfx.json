@@ -32,6 +32,15 @@
       "packtool": "mops sources"
     }
   },
+  "networks": {
+    "local": {
+      "bind": "127.0.0.1:8080",
+      "replica": {
+        "subnet_type": "system"
+      },
+      "type": "ephemeral"
+    }
+  },
   "output_env_file": ".env",
   "version": 1
 }

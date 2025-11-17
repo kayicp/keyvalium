@@ -2,7 +2,7 @@ import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import Text "mo:base/Text";
 import Char "mo:base/Char";
-import ConstantT "types";
+import KVT "types";
 import Value "../util/motoko/Value";
 import Time64 "../util/motoko/Time64";
 import Nat64 "mo:base/Nat64";
@@ -13,20 +13,23 @@ import Nat "mo:base/Nat";
 import Option "../util/motoko/Option";
 
 module {
-  public func getEnvironment(_meta : Value.Metadata) : Result.Type<ConstantT.Environment, Error.Generic> {
+  public func newConstant(arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
+    arg with expires_at = now + arg.duration;
+    created_at = now;
+  });
+
+  public func getEnvironment(_meta : Value.Metadata) : Result.Type<KVT.Environment, Error.Generic> {
     var meta = _meta;
     let now = Time64.nanos();
-    var tx_window = Nat64.fromNat(Value.getNat(meta, ConstantT.TX_WINDOW, 0));
-    // let min_tx_window = Time64.MINUTES(15);
+    let tx_window = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, KVT.TX_WINDOW, 0)));
     // if (tx_window < min_tx_window) {
     //   tx_window := min_tx_window;
-    //   meta := Value.setNat(meta, ConstantT.TX_WINDOW, ?(Nat64.toNat(tx_window)));
+    //   meta := Value.setNat(meta, KVT.TX_WINDOW, ?(Nat64.toNat(tx_window)));
     // };
-    var permitted_drift = Nat64.fromNat(Value.getNat(meta, ConstantT.PERMITTED_DRIFT, 0));
-    // let min_permitted_drift = Time64.SECONDS(5);
+    let permitted_drift = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, KVT.PERMITTED_DRIFT, 0)));
     // if (permitted_drift < min_permitted_drift) {
     //   permitted_drift := min_permitted_drift;
-    //   meta := Value.setNat(meta, ConstantT.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
+    //   meta := Value.setNat(meta, KVT.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
     // };
     #Ok {
       meta;
@@ -36,15 +39,15 @@ module {
     };
   };
 
-  public func getBalance(u : ConstantT.User, token : Principal) : ConstantT.Balance = switch (RBTree.get(u.balances, Principal.compare, token)) {
+  public func getBalance(u : KVT.User, token : Principal) : KVT.Balance = switch (RBTree.get(u.balances, Principal.compare, token)) {
     case (?found) found;
     case _ ({ unlocked = 0; locked = 0 });
   };
-  public func saveBalance(u : ConstantT.User, token : Principal, b : ConstantT.Balance) : ConstantT.User = ({
+  public func saveBalance(u : KVT.User, token : Principal, b : KVT.Balance) : KVT.User = ({
     u with balances = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(u.balances, Principal.compare, token, b) else RBTree.delete(u.balances, Principal.compare, token);
   });
 
-  public func dedupe((ap : Principal, a : ConstantT.TransferArg), (bp : Principal, b : ConstantT.TransferArg)) : Order.Order {
+  public func dedupe((ap : Principal, a : KVT.TransferArg), (bp : Principal, b : KVT.TransferArg)) : Order.Order {
     switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
       case (#equal) ();
       case other return other;
@@ -63,7 +66,7 @@ module {
     };
     Nat.compare(a.amount, b.amount);
   };
-  public func valueTransfer(op : Text, owner : Principal, fee : Nat, arg : ConstantT.TransferArg, xfer : Nat, now : Nat64, phash : ?Blob) : Value.Type {
+  public func valueTransfer(op : Text, owner : Principal, fee : Nat, arg : KVT.TransferArg, xfer : Nat, now : Nat64, phash : ?Blob) : Value.Type {
     var tx = RBTree.empty<Text, Value.Type>();
     tx := Value.setPrincipal(tx, "caller", ?owner);
     tx := Value.setPrincipal(tx, "token", ?arg.token);
@@ -85,16 +88,16 @@ module {
     #Map(RBTree.array(map));
   };
 
-  public func incLock(b : ConstantT.Balance, amt : Nat) : ConstantT.Balance = {
+  public func incLock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with locked = b.locked + amt
   };
-  public func decLock(b : ConstantT.Balance, amt : Nat) : ConstantT.Balance = {
+  public func decLock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with locked = if (b.locked > amt) b.locked - amt else 0
   };
-  public func incUnlock(b : ConstantT.Balance, amt : Nat) : ConstantT.Balance = {
+  public func incUnlock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with unlocked = b.unlocked + amt
   };
-  public func decUnlock(b : ConstantT.Balance, amt : Nat) : ConstantT.Balance = {
+  public func decUnlock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with unlocked = if (b.unlocked > amt) b.unlocked - amt else 0;
   };
 };

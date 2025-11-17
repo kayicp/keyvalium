@@ -1,6 +1,6 @@
 import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
-import ConstantT "types";
-import Constant "lib";
+import KVT "types";
+import KVL "lib";
 import Result "../util/motoko/Result";
 import Value "../util/motoko/Value";
 import LEB128 "mo:leb128";
@@ -22,6 +22,8 @@ import Error "../util/motoko/Error";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import OptionX "../util/motoko/Option";
 import Cycles "mo:core/Cycles";
+import Time64 "../util/motoko/Time64";
+import CMC "../util/motoko/CMC/types";
 
 shared (install) persistent actor class Canister(
   // deploy : {
@@ -30,11 +32,13 @@ shared (install) persistent actor class Canister(
   // }
 ) = Self {
   var meta : Value.Metadata = RBTree.empty();
-  var users = RBTree.empty<Principal, ConstantT.User>();
+  var users = RBTree.empty<Principal, KVT.User>();
+  var constants = RBTree.empty<Nat, KVT.Constant>();
+  var variables = RBTree.empty<Nat, KVT.Variable>();
   var tokens = RBTree.empty<Principal, { withdrawal_fee : Nat }>();
   var blocks = RBTree.empty<Nat, ArchiveT.Block>();
-  var deposit_dedupes : ConstantT.Dedupes = RBTree.empty();
-  var withdraw_dedupes : ConstantT.Dedupes = RBTree.empty();
+  var deposit_dedupes : KVT.Dedupes = RBTree.empty();
+  var withdraw_dedupes : KVT.Dedupes = RBTree.empty();
 
   // switch deploy {
 
@@ -47,15 +51,16 @@ shared (install) persistent actor class Canister(
     case (?found) ?(actor (Principal.toText(p)), found);
     case _ null;
   };
-  func getUser(p : Principal) : ConstantT.User = switch (RBTree.get(users, Principal.compare, p)) {
+  func getUser(p : Principal) : KVT.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
     case _ ({
-      constants = RBTree.empty();
       balances = RBTree.empty();
+      constants = RBTree.empty();
+      variables = RBTree.empty();
     });
   };
-  func saveUser(p : Principal, u : ConstantT.User) = users := if (RBTree.size(u.constants) > 0 or RBTree.size(u.balances) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
-  func checkIdempotency(caller : Principal, opr : ConstantT.ArgType, env : ConstantT.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
+  func saveUser(p : Principal, u : KVT.User) = users := if (RBTree.size(u.constants) > 0 or RBTree.size(u.balances) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+  func checkIdempotency(caller : Principal, opr : KVT.ArgType, env : KVT.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     let ct = switch (created_at) {
       case (?defined) defined;
       case _ return #Ok;
@@ -68,7 +73,7 @@ shared (install) persistent actor class Canister(
       case (#Deposit depo) (deposit_dedupes, depo);
       case (#Withdraw draw) (withdraw_dedupes, draw);
     };
-    switch (RBTree.get(map, Constant.dedupe, (caller, arg))) {
+    switch (RBTree.get(map, KVL.dedupe, (caller, arg))) {
       case (?duplicate_of) return #Err(#Duplicate { duplicate_of });
       case _ #Ok;
     };
@@ -83,7 +88,7 @@ shared (install) persistent actor class Canister(
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
     updateTipCert();
   };
-  func trim(env : ConstantT.Environment) : async* () {
+  func trim(env : KVT.Environment) : async* () {
     var round = 0;
     var max_round = 100;
     let start_time = env.now - env.tx_window - env.permitted_drift;
@@ -94,7 +99,7 @@ shared (install) persistent actor class Canister(
       };
       round += 1;
       switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
-        case (#less) deposit_dedupes := RBTree.delete(deposit_dedupes, Constant.dedupe, (p, arg));
+        case (#less) deposit_dedupes := RBTree.delete(deposit_dedupes, KVL.dedupe, (p, arg));
         case _ break trimming;
       };
     };
@@ -105,7 +110,7 @@ shared (install) persistent actor class Canister(
       };
       round += 1;
       switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
-        case (#less) withdraw_dedupes := RBTree.delete(withdraw_dedupes, Constant.dedupe, (p, arg));
+        case (#less) withdraw_dedupes := RBTree.delete(withdraw_dedupes, KVL.dedupe, (p, arg));
         case _ break trimming;
       };
     };
@@ -208,8 +213,8 @@ shared (install) persistent actor class Canister(
       #Ok(Principal.fromActor(new_canister));
     } catch e #Err(Error.convert(e));
   };
-  public shared ({ caller }) func constant_deposit(depo : ConstantT.TransferArg) : async Result.Type<Nat, ConstantT.DepositError> {
-    if (not Value.getBool(meta, ConstantT.AVAILABLE, true)) return Error.text("Unavailable");
+  public shared ({ caller }) func vault_deposit(depo : KVT.TransferArg) : async Result.Type<Nat, KVT.DepositError> {
+    if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = null };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
@@ -230,7 +235,7 @@ shared (install) persistent actor class Canister(
     if (balance < xfer_and_fee) return #Err(#InsufficientBalance { balance });
     if (approval.allowance < xfer_and_fee) return #Err(#InsufficientAllowance approval);
 
-    let env = switch (Constant.getEnvironment(meta)) {
+    let env = switch (KVL.getEnvironment(meta)) {
       case (#Ok ok) ok;
       case (#Err err) return #Err err;
     };
@@ -253,20 +258,20 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err(#TransferFailed err);
     };
     var user = getUser(caller);
-    var bal = Constant.getBalance(user, depo.token);
-    bal := Constant.incUnlock(bal, depo.amount);
-    user := Constant.saveBalance(user, depo.token, bal);
+    var bal = KVL.getBalance(user, depo.token);
+    bal := KVL.incUnlock(bal, depo.amount);
+    user := KVL.saveBalance(user, depo.token, bal);
     saveUser(caller, user);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
-    if (depo.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, Constant.dedupe, (caller, depo), block_id);
-    newBlock(block_id, Constant.valueTransfer("deposit", caller, 0, depo, xfer_id, env.now, phash));
+    if (depo.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, KVL.dedupe, (caller, depo), block_id);
+    newBlock(block_id, KVL.valueTransfer("deposit", caller, 0, depo, xfer_id, env.now, phash));
     await* trim(env);
     #Ok block_id;
   };
 
-  public shared ({ caller }) func constant_withdraw(draw : ConstantT.TransferArg) : async Result.Type<Nat, ConstantT.WithdrawError> {
-    if (not Value.getBool(meta, ConstantT.AVAILABLE, true)) return Error.text("Unavailable");
+  public shared ({ caller }) func vault_withdraw(draw : KVT.TransferArg) : async Result.Type<Nat, KVT.WithdrawError> {
+    if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = null };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
@@ -279,7 +284,7 @@ shared (install) persistent actor class Canister(
     if (token.withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
 
     var user = getUser(caller);
-    var bal = Constant.getBalance(user, draw.token);
+    var bal = KVL.getBalance(user, draw.token);
     let to_lock = draw.amount + token.withdrawal_fee;
     if (bal.unlocked < to_lock) return #Err(#InsufficientBalance { balance = bal.unlocked });
 
@@ -287,7 +292,7 @@ shared (install) persistent actor class Canister(
       case (?defined) if (defined != token.withdrawal_fee) return #Err(#BadFee { expected_fee = token.withdrawal_fee });
       case _ ();
     };
-    let env = switch (Constant.getEnvironment(meta)) {
+    let env = switch (KVL.getEnvironment(meta)) {
       case (#Ok ok) ok;
       case (#Err err) return #Err err;
     };
@@ -296,9 +301,9 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err err;
       case _ ();
     };
-    bal := Constant.decUnlock(bal, to_lock);
-    bal := Constant.incLock(bal, to_lock);
-    user := Constant.saveBalance(user, draw.token, bal);
+    bal := KVL.decUnlock(bal, to_lock);
+    bal := KVL.incLock(bal, to_lock);
+    user := KVL.saveBalance(user, draw.token, bal);
     saveUser(caller, user);
     let xfer_arg = {
       amount = draw.amount;
@@ -310,13 +315,13 @@ shared (install) persistent actor class Canister(
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
     user := getUser(caller);
-    bal := Constant.getBalance(user, draw.token);
-    bal := Constant.decLock(bal, to_lock); // release lock
+    bal := KVL.getBalance(user, draw.token);
+    bal := KVL.decLock(bal, to_lock); // release lock
     switch xfer_res {
-      case (#Err _) bal := Constant.incUnlock(bal, to_lock); // recover fund
+      case (#Err _) bal := KVL.incUnlock(bal, to_lock); // recover fund
       case _ ();
     };
-    user := Constant.saveBalance(user, draw.token, bal);
+    user := KVL.saveBalance(user, draw.token, bal);
     saveUser(caller, user);
     let xfer_id = switch xfer_res {
       case (#Err err) return #Err(#TransferFailed err);
@@ -324,23 +329,79 @@ shared (install) persistent actor class Canister(
     };
     let this_canister = Principal.fromActor(Self); // todo: set this to fee collector
     user := getUser(this_canister); // give fee to canister
-    bal := Constant.getBalance(user, draw.token);
-    bal := Constant.incUnlock(bal, token.withdrawal_fee - xfer_fee); // canister sponsored the xfer_fee
-    user := Constant.saveBalance(user, draw.token, bal);
+    bal := KVL.getBalance(user, draw.token);
+    bal := KVL.incUnlock(bal, token.withdrawal_fee - xfer_fee); // canister sponsored the xfer_fee
+    user := KVL.saveBalance(user, draw.token, bal);
     saveUser(this_canister, user);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
-    if (draw.created_at != null) withdraw_dedupes := RBTree.insert(withdraw_dedupes, Constant.dedupe, (caller, draw), block_id);
-    newBlock(block_id, Constant.valueTransfer("withdraw", caller, token.withdrawal_fee, draw, xfer_id, env.now, phash));
+    if (draw.created_at != null) withdraw_dedupes := RBTree.insert(withdraw_dedupes, KVL.dedupe, (caller, draw), block_id);
+    newBlock(block_id, KVL.valueTransfer("withdraw", caller, token.withdrawal_fee, draw, xfer_id, env.now, phash));
     await* trim(env);
     #Ok block_id;
   };
 
-  public shared ({ caller }) func constant_reserve(reserve : ConstantT.ReserveArg) : async Result.Type<Nat, ConstantT.ReserveError> {
+  public shared ({ caller }) func constant_reserve(reserves : [KVT.ConstantReserveArg]) : async [Result.Type<Nat, KVT.ConstantReserveErr>] {
+    if (not Value.getBool(meta, KVT.AVAILABLE, true)) return [Error.textBatch("Unavailable")];
+    let user_acct = { owner = caller; subaccount = null };
+    if (not ICRC1L.validateAccount(user_acct)) return [Error.textBatch("Caller must not be Anonymous or Management")];
+
+    let cmc = actor ("rkp4c-7iaaa-aaaaa-aaaca-cai") : CMC.Self;
+    let xdr_permyriad_per_icp = 35_474; // todo: remove this for prod // (await cmc.get_icp_xdr_conversion_rate()).data.xdr_permyriad_per_icp;
+
+    let minimum_duration = switch (Value.metaNat(meta, KVT.MIN_DURATION)) {
+      case (?found) Time64.SECONDS(Nat64.fromNat(found));
+      case _ return [Error.textBatch("Metadata `" # KVT.MIN_DURATION # "` missing")];
+    };
+    let caller_blob = Principal.toBlob(caller);
+    let caller_size = caller_blob.size();
+    let now = Time64.nanos();
+    let res = Buffer.Buffer<Result.Type<Nat, KVT.ConstantReserveErr>>(reserves.size());
+    label inserting for (const in reserves.vals()) {
+      if (const.duration < minimum_duration) {
+        res.add(#Err(#DurationTooShort { minimum_duration }));
+        continue inserting;
+      };
+      let constant = KVL.newConstant(const, now);
+      let constant_blob = to_candid (constant);
+      let constant_size = constant_blob.size();
+
+      let duration_sec = Nat64.toNat(const.duration / Time64.SECONDS(1));
+      var cycles_required = (127_000 * constant_size * duration_sec) / 1_073_741_824; // 1 GiB/s = 127k cycles
+      cycles_required += 1_200_000; // cycles per update message received (user -> canister)
+      cycles_required += 5_000_000; // 5,000,000 cycles per update message
+      // wasm execution is sponsored
+      // intercanister call is sponsored
+      cycles_required += 200 * cycles_required / 100; // todo: put premium_percent in metadata
+
+      // (cycles_required * icp_decimals * per_myriad) / (1T per XDR * xdr_permyriad_per_icp)
+      let icp_required = (cycles_required * 100_000_000 * 10_000) / (1_000_000_000_000 * xdr_permyriad_per_icp);
+
+      // switch (reserve.fee) {
+      //   case (?fee)
+      // };
+    };
+
+    [];
+  };
+
+  public shared ({ caller }) func constant_extend(extend : KVT.ConstantExtendArg) : async Result.Type<Nat, KVT.ConstantExtendErr> {
     #Ok 1;
   };
 
-  public shared ({ caller }) func constant_extend(extend : ConstantT.ExtendArg) : async Result.Type<Nat, ConstantT.ExtendError> {
-    #Ok 1;
+  public shared ({ caller }) func variable_reserve() : async Result.Type<Nat, KVT.VariableReserveErr> {
+    Error.text("Not implemented yet");
+  };
+
+  public shared ({ caller }) func variable_extend() : async Result.Type<Nat, KVT.VariableExtendErr> {
+    Error.text("Not implemented yet");
+  };
+
+  public shared ({ caller }) func variable_update() : async Result.Type<Nat, KVT.VariableUpdateErr> {
+    Error.text("Not implemented yet");
+  };
+
+  public shared ({ caller }) func variable_sponsor() : async Result.Type<Nat, KVT.VariableSponsorErr> {
+    Error.text("Not yet implemented");
   };
 };

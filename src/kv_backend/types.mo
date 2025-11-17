@@ -5,12 +5,13 @@ import Error "../util/motoko/Error";
 import Token "../icrc1_canister/Types";
 
 module {
-  public let AVAILABLE = "constant:available";
-  public let TX_WINDOW = "constant:tx_window";
-  public let PERMITTED_DRIFT = "constant:permitted_drift";
-  public let FEE_COLLECTOR = "constant:fee_collector";
-  public let MAX_TAKE = "constant:max_take_value";
-  public let MAX_QUERY_BATCH = "constant:max_query_batch_size";
+  public let AVAILABLE = "kv:available";
+  public let TX_WINDOW = "vault:tx_window";
+  public let PERMITTED_DRIFT = "vault:permitted_drift";
+  public let FEE_COLLECTOR = "kv:fee_collector";
+  public let MAX_TAKE = "kv:max_take_value";
+  public let MAX_QUERY_BATCH = "kv:max_query_batch_size";
+  public let MIN_DURATION = "kv:min_duration";
 
   public type ArgType = {
     #Deposit : TransferArg;
@@ -22,11 +23,25 @@ module {
     tx_window : Nat64;
     permitted_drift : Nat64;
   };
-  type Constant = { value : Value.Type; expires_at : Nat64 };
+  public type Constant = {
+    description : Text;
+    value : Value.Type;
+    expires_at : Nat64;
+    created_at : Nat64;
+  };
+  public type Variable = {
+    description : Text;
+    value : Value.Type;
+    expires_at : Nat64;
+    updated_at : Nat64;
+    update_credits : Nat;
+    created_at : Nat64;
+  };
   public type Balance = { unlocked : Nat; locked : Nat };
   public type User = {
     balances : RBTree.Type<Principal, Balance>;
-    constants : RBTree.Type<Text, Constant>;
+    constants : RBTree.Type<Nat, ()>;
+    variables : RBTree.Type<Nat, ()>;
   };
   public type TransferArg = {
     token : Principal;
@@ -57,23 +72,45 @@ module {
     #TransferFailed : Token.TransferError;
   };
   public type Fee = { token : Principal; amount : Nat };
-  public type ReserveArg = {
-    key : Text;
+  public type ConstantReserveArg = {
+    description : Text;
     value : Value.Type;
     duration : Nat64; // nano
     fee : ?Fee;
   };
-  public type ReserveError = {
+  public type ConstantReserveErr = {
     #GenericError : Error.Type;
-
+    #GenericBatchError : Error.Type;
+    #DurationTooShort : { minimum_duration : Nat64 };
   };
-  public type ExtendArg = {
-    owner : Principal;
-    key : Text;
+  public type ConstantExtendArg = {
+    id : Nat;
     duration : Nat64; // nano
     fee : ?Fee;
   };
-  public type ExtendError = {
+  public type ConstantExtendErr = {
     #GenericError : Error.Type;
+    #GenericBatchError : Error.Type;
+  };
+
+  public type VariableReserveErr = {
+    #GenericError : Error.Type;
+    #GenericBatchError : Error.Type;
+
+  };
+  public type VariableExtendErr = {
+    #GenericError : Error.Type;
+    #GenericBatchError : Error.Type;
+
+  };
+  public type VariableUpdateErr = {
+    #GenericError : Error.Type;
+    #GenericBatchError : Error.Type;
+
+  };
+  public type VariableSponsorErr = {
+    #GenericError : Error.Type;
+    #GenericBatchError : Error.Type;
+
   };
 };

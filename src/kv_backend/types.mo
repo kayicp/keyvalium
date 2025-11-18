@@ -3,6 +3,8 @@ import Value "../util/motoko/Value";
 import Result "../util/motoko/Result";
 import Error "../util/motoko/Error";
 import Token "../icrc1_canister/Types";
+import CMC "../util/motoko/CMC/types";
+import ICRC1 "../icrc1_canister/main";
 
 module {
   public let AVAILABLE = "kv:available";
@@ -12,16 +14,27 @@ module {
   public let MAX_TAKE = "kv:max_take_value";
   public let MAX_QUERY_BATCH = "kv:max_query_batch_size";
   public let MIN_DURATION = "kv:min_duration";
+  public let WITHDRAWAL_FEE_MULTIPLIER = "kv:withdrawal_fee_multiplier";
 
   public type ArgType = {
     #Deposit : TransferArg;
     #Withdraw : TransferArg;
+    #ConstantReserve : ConstantReserveArg;
+    #ConstantExtend : ConstantExtendArg;
+    #VariableReserve : VariableReserveArg;
+    #VariableExtend : VariableExtendArg;
+    #VariableUpdate : VariableUpdateArg;
+    #VariableSponsor : VariableSponsorArg;
   };
   public type Environment = {
     meta : Value.Metadata;
     now : Nat64;
     tx_window : Nat64;
     permitted_drift : Nat64;
+    cmc_p : Text;
+    icp_p : Text;
+    tcycles_p : Text;
+    withdrawal_fee_multiplier : Nat;
   };
   public type Constant = {
     description : Text;
@@ -49,7 +62,6 @@ module {
     fee : ?Nat;
     created_at : ?Nat64;
   };
-  public type Dedupes = RBTree.Type<(Principal, TransferArg), Nat>;
   public type DepositError = {
     #GenericError : Error.Type;
     #AmountTooLow : { minimum_amount : Nat };
@@ -67,7 +79,6 @@ module {
     #BadFee : { expected_fee : Nat };
     #CreatedInFuture : { ledger_time : Nat64 };
     #TooOld;
-    #InsufficientFunds : { balance : Nat };
     #Duplicate : { duplicate_of : Nat };
     #TransferFailed : Token.TransferError;
   };
@@ -77,11 +88,17 @@ module {
     value : Value.Type;
     duration : Nat64; // nano
     fee : ?Fee;
+    created_at : ?Nat64;
   };
   public type ConstantReserveErr = {
     #GenericError : Error.Type;
     #GenericBatchError : Error.Type;
     #DurationTooShort : { minimum_duration : Nat64 };
+    #BadFee : { expected_fee : Nat };
+    #InsufficientBalance : { balance : Nat; amount_required : Nat };
+    #CreatedInFuture : { ledger_time : Nat64 };
+    #TooOld;
+    #Duplicate : { duplicate_of : Nat };
   };
   public type ConstantExtendArg = {
     id : Nat;
@@ -92,10 +109,15 @@ module {
     #GenericError : Error.Type;
     #GenericBatchError : Error.Type;
   };
+  public type VariableReserveArg = {
 
+  };
   public type VariableReserveErr = {
     #GenericError : Error.Type;
     #GenericBatchError : Error.Type;
+
+  };
+  public type VariableExtendArg = {
 
   };
   public type VariableExtendErr = {
@@ -103,9 +125,15 @@ module {
     #GenericBatchError : Error.Type;
 
   };
+  public type VariableUpdateArg = {
+
+  };
   public type VariableUpdateErr = {
     #GenericError : Error.Type;
     #GenericBatchError : Error.Type;
+
+  };
+  public type VariableSponsorArg = {
 
   };
   public type VariableSponsorErr = {

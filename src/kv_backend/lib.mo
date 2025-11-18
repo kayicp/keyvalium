@@ -18,24 +18,32 @@ module {
     created_at = now;
   });
 
+  func missingMeta(k : Text) : Text = "Metadata `" # k # "` is missing";
   public func getEnvironment(_meta : Value.Metadata) : Result.Type<KVT.Environment, Error.Generic> {
     var meta = _meta;
     let now = Time64.nanos();
-    let tx_window = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, KVT.TX_WINDOW, 0)));
-    // if (tx_window < min_tx_window) {
-    //   tx_window := min_tx_window;
-    //   meta := Value.setNat(meta, KVT.TX_WINDOW, ?(Nat64.toNat(tx_window)));
-    // };
-    let permitted_drift = Time64.SECONDS(Nat64.fromNat(Value.getNat(meta, KVT.PERMITTED_DRIFT, 0)));
-    // if (permitted_drift < min_permitted_drift) {
-    //   permitted_drift := min_permitted_drift;
-    //   meta := Value.setNat(meta, KVT.PERMITTED_DRIFT, ?(Nat64.toNat(permitted_drift)));
-    // };
+    let tx_window = switch (Value.metaNat(meta, KVT.TX_WINDOW)) {
+      case (?found) Time64.SECONDS(Nat64.fromNat(found));
+      case _ return Error.text(missingMeta(KVT.TX_WINDOW));
+    };
+    let permitted_drift = switch (Value.metaNat(meta, KVT.PERMITTED_DRIFT)) {
+      case (?found) Time64.SECONDS(Nat64.fromNat(found));
+      case _ return Error.text(missingMeta(KVT.PERMITTED_DRIFT));
+    };
+    let withdrawal_fee_multiplier = switch (Value.metaNat(meta, KVT.WITHDRAWAL_FEE_MULTIPLIER)) {
+      case (?found) found;
+      case _ return Error.text(missingMeta(KVT.WITHDRAWAL_FEE_MULTIPLIER));
+    };
+
     #Ok {
       meta;
       now;
       tx_window;
       permitted_drift;
+      cmc_p = "rkp4c-7iaaa-aaaaa-aaaca-cai";
+      icp_p = "ryjl3-tyaaa-aaaaa-aaaba-cai";
+      tcycles_p = "um5iw-rqaaa-aaaaq-qaaba-cai";
+      withdrawal_fee_multiplier;
     };
   };
 
@@ -99,5 +107,29 @@ module {
   };
   public func decUnlock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with unlocked = if (b.unlocked > amt) b.unlocked - amt else 0;
+  };
+
+  public func dedupeConstReserve(a : (Principal, KVT.ConstantReserveArg), b : (Principal, KVT.ConstantReserveArg)) : Order.Order {
+    #equal // todo: finish this
+  };
+
+  public func dedupeConstExtend(a : (Principal, KVT.ConstantExtendArg), b : (Principal, KVT.ConstantExtendArg)) : Order.Order {
+    #equal // todo: finish this
+  };
+
+  public func dedupeVarReserve(a : (Principal, KVT.VariableReserveArg), b : (Principal, KVT.VariableReserveArg)) : Order.Order {
+    #equal // todo: finish this
+  };
+
+  public func dedupeVarExtend(a : (Principal, KVT.VariableExtendArg), b : (Principal, KVT.VariableExtendArg)) : Order.Order {
+    #equal // todo: finish this
+  };
+
+  public func dedupeVarUpdate(a : (Principal, KVT.VariableUpdateArg), b : (Principal, KVT.VariableUpdateArg)) : Order.Order {
+    #equal // todo: finish this
+  };
+
+  public func dedupeVarSponsor(a : (Principal, KVT.VariableSponsorArg), b : (Principal, KVT.VariableSponsorArg)) : Order.Order {
+    #equal // todo: finish this
   };
 };

@@ -230,7 +230,7 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
       case (#Err err) return #Err err;
     };
-    meta := env.meta;
+
     let token_txt = Principal.toText(depo.token);
     if (token_txt != env.icp_p and token_txt != env.tcycles_p) return Error.text("Unsupported token");
 
@@ -288,7 +288,7 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
       case (#Err err) return #Err err;
     };
-    meta := env.meta;
+
     let token_txt = Principal.toText(draw.token);
     if (token_txt != env.icp_p and token_txt != env.tcycles_p) return Error.text("Unsupported token");
     let token_canister = actor (token_txt) : ICRC1.Canister;
@@ -360,92 +360,50 @@ shared (install) persistent actor class Canister(
       case (#Ok ok) ok;
       case (#Err(#GenericError err)) return [Error.textBatch(err.message)];
     };
-    meta := env.meta;
-
+    if (reserves.size() > env.max_update_batch) return [Error.textBatch("Batch too large! Current: " # debug_show reserves.size() # ", Max: " # debug_show env.max_update_batch)];
     let cmc = actor (env.cmc_p) : CMC.Self;
     let xdr_permyriad_per_icp = 35_474; // todo: remove this for prod // (await cmc.get_icp_xdr_conversion_rate()).data.xdr_permyriad_per_icp;
-
-    let minimum_duration = switch (Value.metaNat(meta, KVT.MIN_DURATION)) {
-      case (?found) Time64.SECONDS(Nat64.fromNat(found));
-      case _ return [Error.textBatch("Metadata `" # KVT.MIN_DURATION # "` missing")];
-    };
-    var user = getUser(caller);
-
-    let caller_blob = Principal.toBlob(caller);
-    let caller_size = caller_blob.size();
-    let now = Time64.nanos();
     let res = Buffer.Buffer<Result.Type<Nat, KVT.ConstantReserveErr>>(reserves.size());
     let icp_p = Principal.fromText(env.icp_p);
     let tcycles_p = Principal.fromText(env.tcycles_p);
-    label inserting for (const in reserves.vals()) {
-      if (const.duration < minimum_duration) {
-        res.add(#Err(#DurationTooShort { minimum_duration }));
-        continue inserting;
+    label working for (reserve in reserves.vals()) {
+      if (reserve.duration < env.min_duration) {
+        res.add(#Err(#DurationTooShort { minimum_duration = env.min_duration }));
+        continue working;
       };
-      let constant = KVL.newConstant(const, now);
-      let constant_blob = to_candid (constant);
-      let constant_size = constant_blob.size();
-
-      let duration_sec = Nat64.toNat(const.duration / Time64.SECONDS(1));
-      var cycles_required = (127_000 * (caller_size + constant_size) * duration_sec) / 1_073_741_824; // 1 GiB/s = 127k cycles
-      cycles_required += 1_200_000; // cycles per update message received (user -> canister)
-      cycles_required += 5_000_000; // 5,000,000 cycles per update message
-      // wasm execution is sponsored
-      // intercanister call is sponsored
-      cycles_required += 200 * cycles_required / 100; // todo: put premium_percent in metadata
-
-      // (cycles_required * icp_decimals * per_myriad) / (1T per XDR * xdr_permyriad_per_icp)
-      let icp_required = (cycles_required * 100_000_000 * 10_000) / (1_000_000_000_000 * xdr_permyriad_per_icp);
-
-      let (fee_token, bal) = switch (const.fee) {
-        case (?fee) {
-          let amt_required = if (fee.token == icp_p) {
-            if (fee.amount != icp_required) {
-              res.add(#Err(#BadFee { expected_fee = icp_required }));
-              continue inserting;
-            } else icp_required;
-          } else if (fee.token == tcycles_p) {
-            if (fee.amount != cycles_required) {
-              res.add(#Err(#BadFee { expected_fee = cycles_required }));
-              continue inserting;
-            } else cycles_required;
-          } else {
-            res.add(Error.text("Fee token must be ICP (" # env.icp_p # ") or TCYCLES (" # env.tcycles_p # ")"));
-            continue inserting;
-          };
-          var bal = KVL.getBalance(user, fee.token);
-          if (bal.unlocked < amt_required) {
-            res.add(#Err(#InsufficientBalance { balance = bal.unlocked; amount_required = amt_required }));
-            continue inserting;
-          } else (fee.token, KVL.decUnlock(bal, amt_required));
-        };
-        case _ {
-          var bal = KVL.getBalance(user, tcycles_p);
-          if (bal.unlocked < cycles_required) {
-            let cycles_bal = bal.unlocked;
-            bal := KVL.getBalance(user, icp_p);
-            if (bal.unlocked < icp_required) {
-              res.add(#Err(#InsufficientBalance { balance = cycles_bal; amount_required = cycles_required }));
-              continue inserting;
-            } else (icp_p, KVL.decUnlock(bal, icp_required));
-          } else (tcycles_p, KVL.decUnlock(bal, cycles_required));
-        };
-      };
-      switch (checkIdempotency(caller, #ConstantReserve const, env, const.created_at)) {
+      let constant = KVL.newConstant(caller, reserve, env.now);
+      var user = getUser(caller);
+      let fee_amt = KVL.calculateFees(to_candid (constant), reserve.duration, xdr_permyriad_per_icp);
+      let fee_ready = switch (KVL.checkFee(reserve.fee, fee_amt, env, user, { icp_p; tcycles_p })) {
         case (#Err err) {
           res.add(#Err err);
-          continue inserting;
+          continue working;
+        };
+        case (#Ok ok) ok;
+      };
+      switch (checkIdempotency(caller, #ConstantReserve reserve, env, reserve.created_at)) {
+        case (#Err err) {
+          res.add(#Err err);
+          continue working;
         };
         case _ ();
       };
-      user := KVL.saveBalance(user, fee_token, bal);
-
+      var bal = KVL.decUnlock(fee_ready.bal, fee_ready.amt);
+      user := KVL.saveBalance(user, fee_ready.p, bal);
       let (block_id, phash) = ArchiveL.getPhash(blocks);
+      user := KVL.insertConstant(user, block_id);
+      saveUser(caller, user);
+
       constants := RBTree.insert(constants, Nat.compare, block_id, constant);
-      if (const.created_at != null) constant_reserve_dedupes := RBTree.insert(constant_reserve_dedupes, KVL.dedupeConstReserve, (caller, const), block_id);
+      if (reserve.created_at != null) constant_reserve_dedupes := RBTree.insert(constant_reserve_dedupes, KVL.dedupeConstReserve, (caller, reserve), block_id);
       // newBlock(block_id, KVL); todo: finish this
+
+      user := getUser(env.fee_collector);
+      bal := KVL.getBalance(user, fee_ready.p);
+      bal := KVL.incUnlock(bal, fee_ready.amt);
+      user := KVL.saveBalance(user, fee_ready.p, bal);
+      saveUser(env.fee_collector, user);
     };
-    saveUser(caller, user);
     await* trim(env);
     Buffer.toArray(res);
   };
@@ -457,7 +415,70 @@ shared (install) persistent actor class Canister(
     let user_acct = { owner = caller; subaccount = null };
     if (not ICRC1L.validateAccount(user_acct)) return [Error.textBatch("Caller must not be Anonymous or Management")];
 
-    [];
+    let env = switch (KVL.getEnvironment(meta)) {
+      case (#Ok ok) ok;
+      case (#Err(#GenericError err)) return [Error.textBatch(err.message)];
+    };
+    if (extends.size() > env.max_update_batch) return [Error.textBatch("Batch too large! Current: " # debug_show extends.size() # ", Max: " # debug_show env.max_update_batch)];
+    let cmc = actor (env.cmc_p) : CMC.Self;
+    let xdr_permyriad_per_icp = 35_474; // todo: remove this for prod // (await cmc.get_icp_xdr_conversion_rate()).data.xdr_permyriad_per_icp;
+    let res = Buffer.Buffer<Result.Type<Nat, KVT.ConstantExtendErr>>(extends.size());
+    let icp_p = Principal.fromText(env.icp_p);
+    let tcycles_p = Principal.fromText(env.tcycles_p);
+    label working for (extend in extends.vals()) {
+      if (extend.duration < env.min_duration) {
+        res.add(#Err(#DurationTooShort { minimum_duration = env.min_duration }));
+        continue working;
+      };
+      var constant = switch (RBTree.get(constants, Nat.compare, extend.id)) {
+        case (?found) found;
+        case _ {
+          res.add(#Err(#NotFound));
+          continue working;
+        };
+      };
+      var user = getUser(caller);
+      let fee_amt = KVL.calculateFees(to_candid (constant), extend.duration, xdr_permyriad_per_icp);
+      let fee_ready = switch (KVL.checkFee(extend.fee, fee_amt, env, user, { icp_p; tcycles_p })) {
+        case (#Err err) {
+          res.add(#Err err);
+          continue working;
+        };
+        case (#Ok ok) ok;
+      };
+      switch (checkIdempotency(caller, #ConstantExtend extend, env, extend.created_at)) {
+        case (#Err err) {
+          res.add(#Err err);
+          continue working;
+        };
+        case _ ();
+      };
+      var bal = KVL.decUnlock(fee_ready.bal, fee_ready.amt);
+      user := KVL.saveBalance(user, fee_ready.p, bal);
+      saveUser(caller, user);
+
+      constant := KVL.extendConstant(constant, extend.duration);
+      constants := RBTree.insert(constants, Nat.compare, extend.id, constant);
+
+      let (block_id, phash) = ArchiveL.getPhash(blocks);
+      if (extend.created_at != null) constant_extend_dedupes := RBTree.insert(constant_extend_dedupes, KVL.dedupeConstExtend, (caller, extend), block_id);
+      // newBlock(block_id, KVL); todo: finish this
+
+      let fee_take = (100 - 15) * fee_ready.amt / 100;
+      user := getUser(env.fee_collector);
+      bal := KVL.getBalance(user, fee_ready.p);
+      bal := KVL.incUnlock(bal, fee_take);
+      user := KVL.saveBalance(user, fee_ready.p, bal);
+      saveUser(env.fee_collector, user);
+
+      user := getUser(constant.owner);
+      bal := KVL.getBalance(user, fee_ready.p);
+      bal := KVL.incUnlock(bal, fee_ready.amt - fee_take);
+      user := KVL.saveBalance(user, fee_ready.p, bal);
+      saveUser(constant.owner, user);
+    };
+    await* trim(env);
+    Buffer.toArray(res);
   };
 
   public shared ({ caller }) func variable_reserve() : async Result.Type<Nat, KVT.VariableReserveErr> {

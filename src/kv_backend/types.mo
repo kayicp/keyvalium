@@ -12,6 +12,7 @@ module {
   public let PERMITTED_DRIFT = "vault:permitted_drift";
   public let FEE_COLLECTOR = "kv:fee_collector";
   public let MAX_TAKE = "kv:max_take_value";
+  public let MAX_UPDATE_BATCH = "kv:max_update_batch_size";
   public let MAX_QUERY_BATCH = "kv:max_query_batch_size";
   public let MIN_DURATION = "kv:min_duration";
   public let WITHDRAWAL_FEE_MULTIPLIER = "kv:withdrawal_fee_multiplier";
@@ -27,7 +28,6 @@ module {
     #VariableSponsor : VariableSponsorArg;
   };
   public type Environment = {
-    meta : Value.Metadata;
     now : Nat64;
     tx_window : Nat64;
     permitted_drift : Nat64;
@@ -35,8 +35,12 @@ module {
     icp_p : Text;
     tcycles_p : Text;
     withdrawal_fee_multiplier : Nat;
+    min_duration : Nat64;
+    max_update_batch : Nat;
+    fee_collector : Principal;
   };
   public type Constant = {
+    owner : Principal;
     description : Text;
     value : Value.Type;
     expires_at : Nat64;
@@ -104,10 +108,18 @@ module {
     id : Nat;
     duration : Nat64; // nano
     fee : ?Fee;
+    created_at : ?Nat64;
   };
   public type ConstantExtendErr = {
     #GenericError : Error.Type;
     #GenericBatchError : Error.Type;
+    #DurationTooShort : { minimum_duration : Nat64 };
+    #NotFound;
+    #BadFee : { expected_fee : Nat };
+    #InsufficientBalance : { balance : Nat; amount_required : Nat };
+    #CreatedInFuture : { ledger_time : Nat64 };
+    #TooOld;
+    #Duplicate : { duplicate_of : Nat };
   };
   public type VariableReserveArg = {
 

@@ -13,15 +13,14 @@ import Nat "mo:base/Nat";
 import Option "../util/motoko/Option";
 
 module {
-  public func newConstant(arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
+  public func newConstant(caller : Principal, arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
     arg with expires_at = now + arg.duration;
     created_at = now;
+    owner = caller;
   });
 
   func missingMeta(k : Text) : Text = "Metadata `" # k # "` is missing";
-  public func getEnvironment(_meta : Value.Metadata) : Result.Type<KVT.Environment, Error.Generic> {
-    var meta = _meta;
-    let now = Time64.nanos();
+  public func getEnvironment(meta : Value.Metadata) : Result.Type<KVT.Environment, Error.Generic> {
     let tx_window = switch (Value.metaNat(meta, KVT.TX_WINDOW)) {
       case (?found) Time64.SECONDS(Nat64.fromNat(found));
       case _ return Error.text(missingMeta(KVT.TX_WINDOW));
@@ -34,17 +33,36 @@ module {
       case (?found) found;
       case _ return Error.text(missingMeta(KVT.WITHDRAWAL_FEE_MULTIPLIER));
     };
-
+    let min_duration = switch (Value.metaNat(meta, KVT.MIN_DURATION)) {
+      case (?found) Time64.SECONDS(Nat64.fromNat(found));
+      case _ return Error.text(missingMeta(KVT.MIN_DURATION));
+    };
+    let max_update_batch = switch (Value.metaNat(meta, KVT.MAX_UPDATE_BATCH)) {
+      case (?found) found;
+      case _ return Error.text(missingMeta(KVT.MAX_UPDATE_BATCH));
+    };
+    let fee_collector = switch (Value.metaPrincipal(meta, KVT.FEE_COLLECTOR)) {
+      case (?found) found;
+      case _ return Error.text(missingMeta(KVT.FEE_COLLECTOR));
+    };
     #Ok {
-      meta;
-      now;
+      now = Time64.nanos();
       tx_window;
       permitted_drift;
       cmc_p = "rkp4c-7iaaa-aaaaa-aaaca-cai";
       icp_p = "ryjl3-tyaaa-aaaaa-aaaba-cai";
       tcycles_p = "um5iw-rqaaa-aaaaq-qaaba-cai";
       withdrawal_fee_multiplier;
+      min_duration;
+      max_update_batch;
+      fee_collector;
     };
+  };
+  public func insertConstant(u : KVT.User, id : Nat) : KVT.User = {
+    u with constants = RBTree.insert(u.constants, Nat.compare, id, ())
+  };
+  public func deleteConstant(u : KVT.User, id : Nat) : KVT.User = {
+    u with constants = RBTree.delete(u.constants, Nat.compare, id)
   };
 
   public func getBalance(u : KVT.User, token : Principal) : KVT.Balance = switch (RBTree.get(u.balances, Principal.compare, token)) {
@@ -108,6 +126,55 @@ module {
   public func decUnlock(b : KVT.Balance, amt : Nat) : KVT.Balance = {
     b with unlocked = if (b.unlocked > amt) b.unlocked - amt else 0;
   };
+
+  // todo: rethink
+  type Fees = { cycles : Nat; icp : Nat };
+  public func calculateFees(blob : Blob, duration : Nat64, xdr_permyriad_per_icp : Nat) : Fees {
+    let duration_sec = Nat64.toNat(duration / Time64.SECONDS(1));
+    var cycles = (127_000 * blob.size() * duration_sec) / 1_073_741_824; // 1 GiB/s = 127k cycles
+    cycles += 1_200_000; // cycles per update message received (user -> canister)
+    cycles += 5_000_000; // 5,000,000 cycles per update message
+    // wasm execution is sponsored
+    // intercanister call is sponsored
+    cycles += 200 * cycles / 100; // todo: put premium_percent in metadata
+
+    // icp = (cycles * icp_decimals * per_myriad) / (1T per XDR * xdr_permyriad_per_icp)
+    let icp = (cycles * 100_000_000 * 10_000) / (1_000_000_000_000 * xdr_permyriad_per_icp);
+    { cycles; icp };
+  };
+
+  type ChargeOk = { p : Principal; bal : KVT.Balance; amt : Nat };
+  public func checkFee(arg_fee : ?KVT.Fee, fee_amt : Fees, env : KVT.Environment, user : KVT.User, { icp_p : Principal; tcycles_p : Principal }) : Result.Type<ChargeOk, { #GenericError : Error.Type; #BadFee : { expected_fee : Nat }; #InsufficientBalance : { balance : Nat; amount_required : Nat } }> = switch arg_fee {
+    case (?fee) {
+      let amt_required = if (fee.token == icp_p) {
+        if (fee.amount != fee_amt.icp) {
+          return #Err(#BadFee { expected_fee = fee_amt.icp });
+        } else fee_amt.icp;
+      } else if (fee.token == tcycles_p) {
+        if (fee.amount != fee_amt.cycles) {
+          return #Err(#BadFee { expected_fee = fee_amt.cycles });
+        } else fee_amt.cycles;
+      } else return Error.text("Fee token must be ICP (" # env.icp_p # ") or TCYCLES (" # env.tcycles_p # ")");
+      var bal = getBalance(user, fee.token);
+      if (bal.unlocked < amt_required) {
+        return #Err(#InsufficientBalance { balance = bal.unlocked; amount_required = amt_required });
+      } else #Ok { bal; p = fee.token; amt = amt_required };
+    };
+    case _ {
+      var bal = getBalance(user, tcycles_p);
+      if (bal.unlocked < fee_amt.cycles) {
+        let cycles_bal = bal.unlocked;
+        bal := getBalance(user, icp_p);
+        if (bal.unlocked < fee_amt.icp) {
+          return #Err(#InsufficientBalance { balance = cycles_bal; amount_required = fee_amt.cycles });
+        } else #Ok { bal; p = icp_p; amt = fee_amt.icp };
+      } else #Ok { bal; p = tcycles_p; amt = fee_amt.cycles };
+    };
+  };
+
+  public func extendConstant(c : KVT.Constant, t : Nat64) : KVT.Constant = ({
+    c with expires_at = c.expires_at + t;
+  });
 
   public func dedupeConstReserve(a : (Principal, KVT.ConstantReserveArg), b : (Principal, KVT.ConstantReserveArg)) : Order.Order {
     #equal // todo: finish this

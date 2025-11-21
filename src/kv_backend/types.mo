@@ -16,6 +16,7 @@ module {
   public let MAX_QUERY_BATCH = "kv:max_query_batch_size";
   public let MIN_DURATION = "kv:min_duration";
   public let WITHDRAWAL_FEE_MULTIPLIER = "kv:withdrawal_fee_multiplier";
+  // public let OWNER_FEE_PCT = "kv:owner_fee_percent";
 
   public type ArgType = {
     #Deposit : TransferArg;
@@ -38,15 +39,19 @@ module {
     min_duration : Nat64;
     max_update_batch : Nat;
     fee_collector : Principal;
+    // owner_fee_pct : Nat;
   };
   public type Constant = {
     owner : Principal;
+    sub : Blob;
     description : Text;
     value : Value.Type;
     expires_at : Nat64;
     created_at : Nat64;
   };
   public type Variable = {
+    owner : Principal;
+    sub : Blob;
     description : Text;
     value : Value.Type;
     expires_at : Nat64;
@@ -55,12 +60,14 @@ module {
     created_at : Nat64;
   };
   public type Balance = { unlocked : Nat; locked : Nat };
-  public type User = {
+  public type Subacc = {
     balances : RBTree.Type<Principal, Balance>;
     constants : RBTree.Type<Nat, ()>;
     variables : RBTree.Type<Nat, ()>;
   };
+  public type User = RBTree.Type<Blob, Subacc>;
   public type TransferArg = {
+    subaccount : ?Blob;
     token : Principal;
     amount : Nat;
     fee : ?Nat;
@@ -88,6 +95,7 @@ module {
   };
   public type Fee = { token : Principal; amount : Nat };
   public type ConstantReserveArg = {
+    subaccount : ?Blob;
     description : Text;
     value : Value.Type;
     duration : Nat64; // nano
@@ -105,6 +113,7 @@ module {
     #Duplicate : { duplicate_of : Nat };
   };
   public type ConstantExtendArg = {
+    subaccount : ?Blob;
     id : Nat;
     duration : Nat64; // nano
     fee : ?Fee;

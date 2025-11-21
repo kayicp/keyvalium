@@ -21,6 +21,7 @@ import Nat64 "mo:base/Nat64";
 import Error "../util/motoko/Error";
 import ICRC3T "../util/motoko/ICRC-3/Types";
 import OptionX "../util/motoko/Option";
+import Subaccount "../util/motoko/Subaccount";
 import Cycles "mo:core/Cycles";
 import Time64 "../util/motoko/Time64";
 import CMC "../util/motoko/CMC/types";
@@ -34,7 +35,7 @@ shared (install) persistent actor class Canister(
   var meta : Value.Metadata = RBTree.empty();
   var users = RBTree.empty<Principal, KVT.User>();
   var constants = RBTree.empty<Nat, KVT.Constant>();
-  var variables = RBTree.empty<Nat, KVT.Variable>();
+  // var variables = RBTree.empty<Nat, KVT.Variable>();
   var blocks = RBTree.empty<Nat, ArchiveT.Block>();
   var deposit_dedupes = RBTree.empty<(Principal, KVT.TransferArg), Nat>();
   var withdraw_dedupes = RBTree.empty<(Principal, KVT.TransferArg), Nat>();
@@ -54,13 +55,10 @@ shared (install) persistent actor class Canister(
 
   func getUser(p : Principal) : KVT.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
-    case _ ({
-      balances = RBTree.empty();
-      constants = RBTree.empty();
-      variables = RBTree.empty();
-    });
+    case _ RBTree.empty();
   };
-  func saveUser(p : Principal, u : KVT.User) = users := if (RBTree.size(u.constants) > 0 or RBTree.size(u.balances) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+  func saveUser(p : Principal, u : KVT.User) = users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+
   func checkIdempotency(caller : Principal, opr : KVT.ArgType, env : KVT.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     let ct = switch (created_at) {
       case (?defined) defined;
@@ -223,7 +221,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func vault_deposit(depo : KVT.TransferArg) : async Result.Type<Nat, KVT.DepositError> {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
-    let user_acct = { owner = caller; subaccount = null };
+    let user_acct = { owner = caller; subaccount = depo.subaccount };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     let env = switch (KVL.getEnvironment(meta)) {
@@ -266,9 +264,12 @@ shared (install) persistent actor class Canister(
       case (#Err err) return #Err(#TransferFailed err);
     };
     var user = getUser(caller);
-    var bal = KVL.getBalance(user, depo.token);
+    let sub = Subaccount.get(depo.subaccount);
+    var subacc = KVL.getSubacc(user, sub);
+    var bal = KVL.getBalance(subacc, depo.token);
     bal := KVL.incUnlock(bal, depo.amount);
-    user := KVL.saveBalance(user, depo.token, bal);
+    subacc := KVL.saveBalance(subacc, depo.token, bal);
+    user := KVL.saveSubacc(user, sub, subacc);
     saveUser(caller, user);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
@@ -281,7 +282,7 @@ shared (install) persistent actor class Canister(
   public shared ({ caller }) func vault_withdraw(draw : KVT.TransferArg) : async Result.Type<Nat, KVT.WithdrawError> {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
-    let user_acct = { owner = caller; subaccount = null };
+    let user_acct = { owner = caller; subaccount = draw.subaccount };
     if (not ICRC1L.validateAccount(user_acct)) return Error.text("Caller account is not valid");
 
     let env = switch (KVL.getEnvironment(meta)) {
@@ -298,7 +299,9 @@ shared (install) persistent actor class Canister(
     if (withdrawal_fee <= xfer_fee) return Error.text("Withdrawal fee must be larger than transfer fee");
 
     var user = getUser(caller);
-    var bal = KVL.getBalance(user, draw.token);
+    var sub = Subaccount.get(draw.subaccount);
+    var subacc = KVL.getSubacc(user, sub);
+    var bal = KVL.getBalance(subacc, draw.token);
     let to_lock = draw.amount + withdrawal_fee;
     if (bal.unlocked < to_lock) return #Err(#InsufficientBalance { balance = bal.unlocked });
 
@@ -313,7 +316,8 @@ shared (install) persistent actor class Canister(
     };
     bal := KVL.decUnlock(bal, to_lock);
     bal := KVL.incLock(bal, to_lock);
-    user := KVL.saveBalance(user, draw.token, bal);
+    subacc := KVL.saveBalance(subacc, draw.token, bal);
+    user := KVL.saveSubacc(user, sub, subacc);
     saveUser(caller, user);
     let xfer_arg = {
       amount = draw.amount;
@@ -325,24 +329,28 @@ shared (install) persistent actor class Canister(
     };
     let xfer_res = await token_canister.icrc1_transfer(xfer_arg);
     user := getUser(caller);
-    bal := KVL.getBalance(user, draw.token);
+    subacc := KVL.getSubacc(user, sub);
+    bal := KVL.getBalance(subacc, draw.token);
     bal := KVL.decLock(bal, to_lock); // release lock
     switch xfer_res {
       case (#Err _) bal := KVL.incUnlock(bal, to_lock); // recover fund
       case _ ();
     };
-    user := KVL.saveBalance(user, draw.token, bal);
+    subacc := KVL.saveBalance(subacc, draw.token, bal);
+    user := KVL.saveSubacc(user, sub, subacc);
     saveUser(caller, user);
     let xfer_id = switch xfer_res {
       case (#Err err) return #Err(#TransferFailed err);
       case (#Ok ok) ok;
     };
-    let this_canister = Principal.fromActor(Self); // todo: set this to fee collector
-    user := getUser(this_canister); // give fee to canister
-    bal := KVL.getBalance(user, draw.token);
+    user := getUser(env.fee_collector);
+    sub := Subaccount.get(null);
+    subacc := KVL.getSubacc(user, sub);
+    bal := KVL.getBalance(subacc, draw.token);
     bal := KVL.incUnlock(bal, withdrawal_fee - xfer_fee); // canister sponsored the xfer_fee
-    user := KVL.saveBalance(user, draw.token, bal);
-    saveUser(this_canister, user);
+    subacc := KVL.saveBalance(subacc, draw.token, bal);
+    user := KVL.saveSubacc(user, sub, subacc);
+    saveUser(env.fee_collector, user);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (draw.created_at != null) withdraw_dedupes := RBTree.insert(withdraw_dedupes, KVL.dedupe, (caller, draw), block_id);
@@ -353,8 +361,7 @@ shared (install) persistent actor class Canister(
 
   public shared ({ caller }) func constant_reserve(reserves : [KVT.ConstantReserveArg]) : async [Result.Type<Nat, KVT.ConstantReserveErr>] {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return [Error.textBatch("Unavailable")];
-    let user_acct = { owner = caller; subaccount = null };
-    if (not ICRC1L.validateAccount(user_acct)) return [Error.textBatch("Caller must not be Anonymous or Management")];
+    if (not ICRC1L.validatePrincipal(caller)) return [Error.textBatch("Caller must not be Anonymous or Management")];
 
     let env = switch (KVL.getEnvironment(meta)) {
       case (#Ok ok) ok;
@@ -367,14 +374,21 @@ shared (install) persistent actor class Canister(
     let icp_p = Principal.fromText(env.icp_p);
     let tcycles_p = Principal.fromText(env.tcycles_p);
     label working for (reserve in reserves.vals()) {
+      if (not Subaccount.validate(reserve.subaccount)) {
+        res.add(Error.text("Subaccount is invalid"));
+        continue working;
+      };
       if (reserve.duration < env.min_duration) {
         res.add(#Err(#DurationTooShort { minimum_duration = env.min_duration }));
         continue working;
       };
-      let constant = KVL.newConstant(caller, reserve, env.now);
+      let user_acct = { owner = caller; subaccount = reserve.subaccount };
       var user = getUser(caller);
+      var sub = Subaccount.get(reserve.subaccount);
+      var subacc = KVL.getSubacc(user, sub);
+      let constant = KVL.newConstant(caller, sub, reserve, env.now);
       let fee_amt = KVL.calculateFees(to_candid (constant), reserve.duration, xdr_permyriad_per_icp);
-      let fee_ready = switch (KVL.checkFee(reserve.fee, fee_amt, env, user, { icp_p; tcycles_p })) {
+      let fee_ready = switch (KVL.checkFee(reserve.fee, fee_amt, env, subacc, { icp_p; tcycles_p })) {
         case (#Err err) {
           res.add(#Err err);
           continue working;
@@ -389,9 +403,10 @@ shared (install) persistent actor class Canister(
         case _ ();
       };
       var bal = KVL.decUnlock(fee_ready.bal, fee_ready.amt);
-      user := KVL.saveBalance(user, fee_ready.p, bal);
+      subacc := KVL.saveBalance(subacc, fee_ready.p, bal);
       let (block_id, phash) = ArchiveL.getPhash(blocks);
-      user := KVL.insertConstant(user, block_id);
+      subacc := KVL.insertConstant(subacc, block_id);
+      user := KVL.saveSubacc(user, sub, subacc);
       saveUser(caller, user);
 
       constants := RBTree.insert(constants, Nat.compare, block_id, constant);
@@ -399,21 +414,22 @@ shared (install) persistent actor class Canister(
       // newBlock(block_id, KVL); todo: finish this
 
       user := getUser(env.fee_collector);
-      bal := KVL.getBalance(user, fee_ready.p);
+      sub := Subaccount.get(null);
+      subacc := KVL.getSubacc(user, sub);
+      bal := KVL.getBalance(subacc, fee_ready.p);
       bal := KVL.incUnlock(bal, fee_ready.amt);
-      user := KVL.saveBalance(user, fee_ready.p, bal);
+      subacc := KVL.saveBalance(subacc, fee_ready.p, bal);
+      user := KVL.saveSubacc(user, sub, subacc);
       saveUser(env.fee_collector, user);
     };
     await* trim(env);
     Buffer.toArray(res);
   };
-  // todo: add subaccount?
-  // todo: add reserve credit?
 
   public shared ({ caller }) func constant_extend(extends : [KVT.ConstantExtendArg]) : async [Result.Type<Nat, KVT.ConstantExtendErr>] {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return [Error.textBatch("Unavailable")];
-    let user_acct = { owner = caller; subaccount = null };
-    if (not ICRC1L.validateAccount(user_acct)) return [Error.textBatch("Caller must not be Anonymous or Management")];
+    // let user_acct = { owner = caller; subaccount = null };
+    if (not ICRC1L.validatePrincipal(caller)) return [Error.textBatch("Caller must not be Anonymous or Management")];
 
     let env = switch (KVL.getEnvironment(meta)) {
       case (#Ok ok) ok;
@@ -426,6 +442,7 @@ shared (install) persistent actor class Canister(
     let icp_p = Principal.fromText(env.icp_p);
     let tcycles_p = Principal.fromText(env.tcycles_p);
     label working for (extend in extends.vals()) {
+
       if (extend.duration < env.min_duration) {
         res.add(#Err(#DurationTooShort { minimum_duration = env.min_duration }));
         continue working;
@@ -438,8 +455,10 @@ shared (install) persistent actor class Canister(
         };
       };
       var user = getUser(caller);
+      var sub = Subaccount.get(extend.subaccount);
+      var subacc = KVL.getSubacc(user, sub);
       let fee_amt = KVL.calculateFees(to_candid (constant), extend.duration, xdr_permyriad_per_icp);
-      let fee_ready = switch (KVL.checkFee(extend.fee, fee_amt, env, user, { icp_p; tcycles_p })) {
+      let fee_ready = switch (KVL.checkFee(extend.fee, fee_amt, env, subacc, { icp_p; tcycles_p })) {
         case (#Err err) {
           res.add(#Err err);
           continue working;
@@ -454,7 +473,8 @@ shared (install) persistent actor class Canister(
         case _ ();
       };
       var bal = KVL.decUnlock(fee_ready.bal, fee_ready.amt);
-      user := KVL.saveBalance(user, fee_ready.p, bal);
+      subacc := KVL.saveBalance(subacc, fee_ready.p, bal);
+      user := KVL.saveSubacc(user, sub, subacc);
       saveUser(caller, user);
 
       constant := KVL.extendConstant(constant, extend.duration);
@@ -464,18 +484,21 @@ shared (install) persistent actor class Canister(
       if (extend.created_at != null) constant_extend_dedupes := RBTree.insert(constant_extend_dedupes, KVL.dedupeConstExtend, (caller, extend), block_id);
       // newBlock(block_id, KVL); todo: finish this
 
-      let fee_take = (100 - 15) * fee_ready.amt / 100;
+      // let fee_take = (100 - env.owner_fee_pct) * fee_ready.amt / 100;
       user := getUser(env.fee_collector);
-      bal := KVL.getBalance(user, fee_ready.p);
-      bal := KVL.incUnlock(bal, fee_take);
-      user := KVL.saveBalance(user, fee_ready.p, bal);
+      sub := Subaccount.get(null);
+      subacc := KVL.getSubacc(user, sub);
+      bal := KVL.getBalance(subacc, fee_ready.p);
+      bal := KVL.incUnlock(bal, fee_ready.amt);
+      subacc := KVL.saveBalance(subacc, fee_ready.p, bal);
+      user := KVL.saveSubacc(user, sub, subacc);
       saveUser(env.fee_collector, user);
 
-      user := getUser(constant.owner);
-      bal := KVL.getBalance(user, fee_ready.p);
-      bal := KVL.incUnlock(bal, fee_ready.amt - fee_take);
-      user := KVL.saveBalance(user, fee_ready.p, bal);
-      saveUser(constant.owner, user);
+      // user := getUser(constant.owner);
+      // bal := KVL.getBalance(user, fee_ready.p);
+      // bal := KVL.incUnlock(bal, fee_ready.amt - fee_take);
+      // user := KVL.saveBalance(user, fee_ready.p, bal);
+      // saveUser(constant.owner, user);
     };
     await* trim(env);
     Buffer.toArray(res);

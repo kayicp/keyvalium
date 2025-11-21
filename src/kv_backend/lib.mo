@@ -10,13 +10,15 @@ import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Principal "mo:base/Principal";
 import Order "mo:base/Order";
 import Nat "mo:base/Nat";
+import Blob "mo:base/Blob";
 import Option "../util/motoko/Option";
 
 module {
-  public func newConstant(caller : Principal, arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
+  public func newConstant(owner : Principal, sub : Blob, arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
     arg with expires_at = now + arg.duration;
     created_at = now;
-    owner = caller;
+    owner;
+    sub;
   });
 
   func missingMeta(k : Text) : Text = "Metadata `" # k # "` is missing";
@@ -45,6 +47,10 @@ module {
       case (?found) found;
       case _ return Error.text(missingMeta(KVT.FEE_COLLECTOR));
     };
+    // let owner_fee_pct = switch (Value.metaNat(meta, KVT.OWNER_FEE_PCT)) {
+    //   case (?found) found;
+    //   case _ return Error.text(missingMeta(KVT.OWNER_FEE_PCT));
+    // };
     #Ok {
       now = Time64.nanos();
       tx_window;
@@ -56,21 +62,32 @@ module {
       min_duration;
       max_update_batch;
       fee_collector;
+      // owner_fee_pct;
     };
   };
-  public func insertConstant(u : KVT.User, id : Nat) : KVT.User = {
-    u with constants = RBTree.insert(u.constants, Nat.compare, id, ())
+  public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u, Blob.compare, sub)) {
+    case (?found) found;
+    case _ ({
+      balances = RBTree.empty();
+      constants = RBTree.empty();
+      variables = RBTree.empty();
+    });
   };
-  public func deleteConstant(u : KVT.User, id : Nat) : KVT.User = {
-    u with constants = RBTree.delete(u.constants, Nat.compare, id)
+  public func saveSubacc(u : KVT.User, sub : Blob, s : KVT.Subacc) : KVT.User = if (RBTree.size(s.balances) > 0 or RBTree.size(s.constants) > 0 or RBTree.size(s.variables) > 0) RBTree.insert(u, Blob.compare, sub, s) else RBTree.delete(u, Blob.compare, sub);
+
+  public func insertConstant(s : KVT.Subacc, id : Nat) : KVT.Subacc = {
+    s with constants = RBTree.insert(s.constants, Nat.compare, id, ())
+  };
+  public func deleteConstant(s : KVT.Subacc, id : Nat) : KVT.Subacc = {
+    s with constants = RBTree.delete(s.constants, Nat.compare, id)
   };
 
-  public func getBalance(u : KVT.User, token : Principal) : KVT.Balance = switch (RBTree.get(u.balances, Principal.compare, token)) {
+  public func getBalance(s : KVT.Subacc, token : Principal) : KVT.Balance = switch (RBTree.get(s.balances, Principal.compare, token)) {
     case (?found) found;
     case _ ({ unlocked = 0; locked = 0 });
   };
-  public func saveBalance(u : KVT.User, token : Principal, b : KVT.Balance) : KVT.User = ({
-    u with balances = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(u.balances, Principal.compare, token, b) else RBTree.delete(u.balances, Principal.compare, token);
+  public func saveBalance(s : KVT.Subacc, token : Principal, b : KVT.Balance) : KVT.Subacc = ({
+    s with balances = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(s.balances, Principal.compare, token, b) else RBTree.delete(s.balances, Principal.compare, token);
   });
 
   public func dedupe((ap : Principal, a : KVT.TransferArg), (bp : Principal, b : KVT.TransferArg)) : Order.Order {
@@ -132,7 +149,7 @@ module {
   public func calculateFees(blob : Blob, duration : Nat64, xdr_permyriad_per_icp : Nat) : Fees {
     let duration_sec = Nat64.toNat(duration / Time64.SECONDS(1));
     var cycles = (127_000 * blob.size() * duration_sec) / 1_073_741_824; // 1 GiB/s = 127k cycles
-    cycles += 1_200_000; // cycles per update message received (user -> canister)
+    cycles += 1_200_000; // cycles per update message received (sub -> canister)
     cycles += 5_000_000; // 5,000,000 cycles per update message
     // wasm execution is sponsored
     // intercanister call is sponsored
@@ -144,7 +161,7 @@ module {
   };
 
   type ChargeOk = { p : Principal; bal : KVT.Balance; amt : Nat };
-  public func checkFee(arg_fee : ?KVT.Fee, fee_amt : Fees, env : KVT.Environment, user : KVT.User, { icp_p : Principal; tcycles_p : Principal }) : Result.Type<ChargeOk, { #GenericError : Error.Type; #BadFee : { expected_fee : Nat }; #InsufficientBalance : { balance : Nat; amount_required : Nat } }> = switch arg_fee {
+  public func checkFee(arg_fee : ?KVT.Fee, fee_amt : Fees, env : KVT.Environment, sub : KVT.Subacc, { icp_p : Principal; tcycles_p : Principal }) : Result.Type<ChargeOk, { #GenericError : Error.Type; #BadFee : { expected_fee : Nat }; #InsufficientBalance : { balance : Nat; amount_required : Nat } }> = switch arg_fee {
     case (?fee) {
       let amt_required = if (fee.token == icp_p) {
         if (fee.amount != fee_amt.icp) {
@@ -155,16 +172,16 @@ module {
           return #Err(#BadFee { expected_fee = fee_amt.cycles });
         } else fee_amt.cycles;
       } else return Error.text("Fee token must be ICP (" # env.icp_p # ") or TCYCLES (" # env.tcycles_p # ")");
-      var bal = getBalance(user, fee.token);
+      var bal = getBalance(sub, fee.token);
       if (bal.unlocked < amt_required) {
         return #Err(#InsufficientBalance { balance = bal.unlocked; amount_required = amt_required });
       } else #Ok { bal; p = fee.token; amt = amt_required };
     };
     case _ {
-      var bal = getBalance(user, tcycles_p);
+      var bal = getBalance(sub, tcycles_p);
       if (bal.unlocked < fee_amt.cycles) {
         let cycles_bal = bal.unlocked;
-        bal := getBalance(user, icp_p);
+        bal := getBalance(sub, icp_p);
         if (bal.unlocked < fee_amt.icp) {
           return #Err(#InsufficientBalance { balance = cycles_bal; amount_required = fee_amt.cycles });
         } else #Ok { bal; p = icp_p; amt = fee_amt.icp };

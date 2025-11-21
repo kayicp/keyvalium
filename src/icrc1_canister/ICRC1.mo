@@ -13,7 +13,9 @@ import RBTree "../util/motoko/StableCollections/RedBlackTree/RBTree";
 import Option "../util/motoko/Option";
 
 module {
-  public func validateAccount({ owner; subaccount } : I.Account) : Bool = if (Principal.isAnonymous(owner) or Principal.equal(owner, Management.principal()) or Principal.toBlob(owner).size() > 29) false else Subaccount.validate(subaccount);
+  public func validatePrincipal(o : Principal) : Bool = not (Principal.isAnonymous(o) or Principal.equal(o, Management.principal()) or Principal.toBlob(o).size() > 29);
+
+  public func validateAccount({ owner; subaccount } : I.Account) : Bool = validatePrincipal(owner) and Subaccount.validate(subaccount);
 
   // todo: dont do this?
   public func compareAccount(a : I.Account, b : I.Account) : Order.Order = switch (Principal.compare(a.owner, b.owner)) {

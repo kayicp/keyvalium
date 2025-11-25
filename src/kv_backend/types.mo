@@ -17,6 +17,7 @@ module {
   public let MIN_DURATION = "kv:min_duration";
   public let WITHDRAWAL_FEE_MULTIPLIER = "kv:withdrawal_fee_multiplier";
   // public let OWNER_FEE_PCT = "kv:owner_fee_percent";
+  public let PREMIUM_PCT = "kv:premium_percent";
 
   public type ArgType = {
     #Deposit : TransferArg;
@@ -40,6 +41,7 @@ module {
     max_update_batch : Nat;
     fee_collector : Principal;
     // owner_fee_pct : Nat;
+    premium_pct : Nat;
   };
   public type Constant = {
     owner : Principal;

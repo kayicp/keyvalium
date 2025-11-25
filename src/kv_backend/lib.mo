@@ -52,6 +52,10 @@ module {
     //   case (?found) found;
     //   case _ return Error.text(missingMeta(KVT.OWNER_FEE_PCT));
     // };
+    let premium_pct = switch (Value.metaNat(meta, KVT.PREMIUM_PCT)) {
+      case (?found) found;
+      case _ return Error.text(missingMeta(KVT.PREMIUM_PCT));
+    };
     #Ok {
       now = Time64.nanos();
       tx_window;
@@ -64,6 +68,7 @@ module {
       max_update_batch;
       fee_collector;
       // owner_fee_pct;
+      premium_pct;
     };
   };
   public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u, Blob.compare, sub)) {
@@ -208,16 +213,17 @@ module {
     created_at = 8;
   });
 
-  // todo: rethink
   type Fees = { cycles : Nat; icp : Nat };
-  public func calculateFees(size : Nat, duration : Nat64, xdr_permyriad_per_icp : Nat) : Fees {
+  public func calculateFees(size : Nat, duration : Nat64, xdr_permyriad_per_icp : Nat, premium_pct : Nat) : Fees {
     let duration_sec = Nat64.toNat(duration / Time64.SECONDS(1));
     var cycles = (127_000 * size * duration_sec) / 1_073_741_824; // 1 GiB/s = 127k cycles
     cycles += 1_200_000; // cycles per update message received (sub -> canister)
     cycles += 5_000_000; // 5,000,000 cycles per update message
-    // wasm execution is sponsored
-    // intercanister call is sponsored
-    cycles += 200 * cycles / 100; // todo: put premium_percent in metadata
+    // ingress byte reception is sponsored (2000 cycles per byte received)
+    // wasm execution is sponsored (1 cycle per instruction)
+    // intercanister call is sponsored (260k cycles base, 1k per byte outgoing) + reply byte transmision
+
+    cycles += premium_pct * cycles / 100;
 
     // icp = (cycles * icp_decimals * per_myriad) / (1T per XDR * xdr_permyriad_per_icp)
     let icp = (cycles * 100_000_000 * 10_000) / (1_000_000_000_000 * xdr_permyriad_per_icp);

@@ -93,6 +93,7 @@ shared (install) persistent actor class Canister(
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
     updateTipCert();
   };
+  // todo: finish this
   func trim(env : KVT.Environment) : async* () {
     var round = 0;
     var max_round = 100;
@@ -389,7 +390,7 @@ shared (install) persistent actor class Canister(
       var subacc = KVL.getSubacc(user, sub);
       let constant = KVL.newConstant(caller, sub, reserve, env.now);
       let sz = KVL.constBytes(constant);
-      let fee_amt = KVL.calculateFees(sz.owner + sz.sub + sz.about + sz.value + sz.expires_at + sz.created_at, reserve.duration, xdr_permyriad_per_icp);
+      let fee_amt = KVL.calculateFees(sz.owner + sz.sub + sz.about + sz.value + sz.expires_at + sz.created_at, reserve.duration, xdr_permyriad_per_icp, env.premium_pct);
       let fee_ready = switch (KVL.checkFee(reserve.fee, fee_amt, env, subacc, { icp_p; tcycles_p })) {
         case (#Err err) {
           res.add(#Err err);
@@ -463,7 +464,7 @@ shared (install) persistent actor class Canister(
       var sub = Subaccount.get(extend.subaccount);
       var subacc = KVL.getSubacc(user, sub);
       let sz = KVL.constBytes(constant);
-      let fee_amt = KVL.calculateFees(sz.owner + sz.sub + sz.about + sz.value + sz.expires_at + sz.created_at, extend.duration, xdr_permyriad_per_icp);
+      let fee_amt = KVL.calculateFees(sz.owner + sz.sub + sz.about + sz.value + sz.expires_at + sz.created_at, extend.duration, xdr_permyriad_per_icp, env.premium_pct);
       let fee_ready = switch (KVL.checkFee(extend.fee, fee_amt, env, subacc, { icp_p; tcycles_p })) {
         case (#Err err) {
           res.add(#Err err);

@@ -24,10 +24,10 @@ module {
     #Withdraw : TransferArg;
     #ConstantReserve : ConstantReserveArg;
     #ConstantExtend : ConstantExtendArg;
-    #VariableReserve : VariableReserveArg;
-    #VariableExtend : VariableExtendArg;
-    #VariableUpdate : VariableUpdateArg;
-    #VariableSponsor : VariableSponsorArg;
+    // #VariableReserve : VariableReserveArg;
+    // #VariableExtend : VariableExtendArg;
+    // #VariableUpdate : VariableUpdateArg;
+    // #VariableSponsor : VariableSponsorArg;
   };
   public type Environment = {
     now : Nat64;
@@ -67,7 +67,10 @@ module {
     constants : RBTree.Type<Nat, ()>;
     variables : RBTree.Type<Nat, ()>;
   };
-  public type User = RBTree.Type<Blob, Subacc>;
+  public type User = {
+    last_active : Nat64;
+    subs : RBTree.Type<Blob, Subacc>;
+  };
   public type TransferArg = {
     subaccount : ?Blob;
     token : Principal;
@@ -132,36 +135,40 @@ module {
     #TooOld;
     #Duplicate : { duplicate_of : Nat };
   };
-  public type VariableReserveArg = {
+  public type Nats = RBTree.Type<Nat, ()>;
+  public type Expiries = RBTree.Type<Nat64, (orders : Nats)>;
+  public type Principals = RBTree.Type<Principal, ()>;
+  public type UserExpiries = RBTree.Type<Nat64, Principals>;
+  // public type VariableReserveArg = {
 
-  };
-  public type VariableReserveErr = {
-    #GenericError : Error.Type;
-    #GenericBatchError : Error.Type;
+  // };
+  // public type VariableReserveErr = {
+  //   #GenericError : Error.Type;
+  //   #GenericBatchError : Error.Type;
 
-  };
-  public type VariableExtendArg = {
+  // };
+  // public type VariableExtendArg = {
 
-  };
-  public type VariableExtendErr = {
-    #GenericError : Error.Type;
-    #GenericBatchError : Error.Type;
+  // };
+  // public type VariableExtendErr = {
+  //   #GenericError : Error.Type;
+  //   #GenericBatchError : Error.Type;
 
-  };
-  public type VariableUpdateArg = {
+  // };
+  // public type VariableUpdateArg = {
 
-  };
-  public type VariableUpdateErr = {
-    #GenericError : Error.Type;
-    #GenericBatchError : Error.Type;
+  // };
+  // public type VariableUpdateErr = {
+  //   #GenericError : Error.Type;
+  //   #GenericBatchError : Error.Type;
 
-  };
-  public type VariableSponsorArg = {
+  // };
+  // public type VariableSponsorArg = {
 
-  };
-  public type VariableSponsorErr = {
-    #GenericError : Error.Type;
-    #GenericBatchError : Error.Type;
+  // };
+  // public type VariableSponsorErr = {
+  //   #GenericError : Error.Type;
+  //   #GenericBatchError : Error.Type;
 
-  };
+  // };
 };

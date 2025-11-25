@@ -26,6 +26,8 @@ import Cycles "mo:core/Cycles";
 import Time64 "../util/motoko/Time64";
 import CMC "../util/motoko/CMC/types";
 
+/*
+*/
 shared (install) persistent actor class Canister(
   // deploy : {
   //   #Init : {};
@@ -34,17 +36,19 @@ shared (install) persistent actor class Canister(
 ) = Self {
   var meta : Value.Metadata = RBTree.empty();
   var users = RBTree.empty<Principal, KVT.User>();
+  var users_by_expiry : KVT.UserExpiries = RBTree.empty();
   var constants = RBTree.empty<Nat, KVT.Constant>();
+  var constants_by_expiry = RBTree.empty<Nat64, KVT.Nats>();
   // var variables = RBTree.empty<Nat, KVT.Variable>();
   var blocks = RBTree.empty<Nat, ArchiveT.Block>();
   var deposit_dedupes = RBTree.empty<(Principal, KVT.TransferArg), Nat>();
   var withdraw_dedupes = RBTree.empty<(Principal, KVT.TransferArg), Nat>();
   var constant_reserve_dedupes = RBTree.empty<(Principal, KVT.ConstantReserveArg), Nat>();
   var constant_extend_dedupes = RBTree.empty<(Principal, KVT.ConstantExtendArg), Nat>();
-  var variable_reserve_dedupes = RBTree.empty<(Principal, KVT.VariableReserveArg), Nat>();
-  var variable_extend_dedupes = RBTree.empty<(Principal, KVT.VariableExtendArg), Nat>();
-  var variable_update_dedupes = RBTree.empty<(Principal, KVT.VariableUpdateArg), Nat>();
-  var variable_sponsor_dedupes = RBTree.empty<(Principal, KVT.VariableSponsorArg), Nat>();
+  // var variable_reserve_dedupes = RBTree.empty<(Principal, KVT.VariableReserveArg), Nat>();
+  // var variable_extend_dedupes = RBTree.empty<(Principal, KVT.VariableExtendArg), Nat>();
+  // var variable_update_dedupes = RBTree.empty<(Principal, KVT.VariableUpdateArg), Nat>();
+  // var variable_sponsor_dedupes = RBTree.empty<(Principal, KVT.VariableSponsorArg), Nat>();
 
   // switch deploy {
 
@@ -55,9 +59,12 @@ shared (install) persistent actor class Canister(
 
   func getUser(p : Principal) : KVT.User = switch (RBTree.get(users, Principal.compare, p)) {
     case (?found) found;
-    case _ RBTree.empty();
+    case _ ({
+      last_active = 0;
+      subs = RBTree.empty();
+    });
   };
-  func saveUser(p : Principal, u : KVT.User) = users := if (RBTree.size(u) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
+  func saveUser(p : Principal, u : KVT.User) = users := if (RBTree.size(u.subs) > 0) RBTree.insert(users, Principal.compare, p, u) else RBTree.delete(users, Principal.compare, p);
 
   func checkIdempotency(caller : Principal, opr : KVT.ArgType, env : KVT.Environment, created_at : ?Nat64) : Result.Type<(), { #CreatedInFuture : { ledger_time : Nat64 }; #TooOld; #Duplicate : { duplicate_of : Nat } }> {
     let ct = switch (created_at) {
@@ -73,10 +80,10 @@ shared (install) persistent actor class Canister(
       case (#Withdraw arg) RBTree.get(withdraw_dedupes, KVL.dedupe, (caller, arg));
       case (#ConstantReserve arg) RBTree.get(constant_reserve_dedupes, KVL.dedupeConstReserve, (caller, arg));
       case (#ConstantExtend arg) RBTree.get(constant_extend_dedupes, KVL.dedupeConstExtend, (caller, arg));
-      case (#VariableReserve arg) RBTree.get(variable_reserve_dedupes, KVL.dedupeVarReserve, (caller, arg));
-      case (#VariableExtend arg) RBTree.get(variable_extend_dedupes, KVL.dedupeVarExtend, (caller, arg));
-      case (#VariableUpdate arg) RBTree.get(variable_update_dedupes, KVL.dedupeVarUpdate, (caller, arg));
-      case (#VariableSponsor arg) RBTree.get(variable_sponsor_dedupes, KVL.dedupeVarSponsor, (caller, arg));
+      // case (#VariableReserve arg) RBTree.get(variable_reserve_dedupes, KVL.dedupeVarReserve, (caller, arg));
+      // case (#VariableExtend arg) RBTree.get(variable_extend_dedupes, KVL.dedupeVarExtend, (caller, arg));
+      // case (#VariableUpdate arg) RBTree.get(variable_update_dedupes, KVL.dedupeVarUpdate, (caller, arg));
+      // case (#VariableSponsor arg) RBTree.get(variable_sponsor_dedupes, KVL.dedupeVarSponsor, (caller, arg));
     };
     switch find_dupe {
       case (?duplicate_of) #Err(#Duplicate { duplicate_of });
@@ -93,11 +100,49 @@ shared (install) persistent actor class Canister(
     tip_cert := MerkleTree.put(tip_cert, [Text.encodeUtf8(ICRC3T.LAST_BLOCK_HASH)], valh);
     updateTipCert();
   };
-  // todo: finish this
-  func trim(env : KVT.Environment) : async* () {
+  func syncTrim(env : KVT.Environment) {
     var round = 0;
     var max_round = 100;
     let start_time = env.now - env.tx_window - env.permitted_drift;
+    label trimming while (round < max_round) {
+      let (exp_t, exp_ids) = switch (RBTree.min(constants_by_expiry)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      if (exp_t > env.now) break trimming;
+      while (round < max_round) {
+        round += 1;
+        let id = switch (RBTree.minKey(exp_ids)) {
+          case (?min) min;
+          case _ {
+            constants_by_expiry := RBTree.delete(constants_by_expiry, Nat64.compare, exp_t);
+            continue trimming;
+          };
+        };
+        var expiries = RBTree.delete(exp_ids, Nat.compare, id); // checked
+        constants_by_expiry := KVL.saveExpiries(constants_by_expiry, exp_t, expiries);
+        var c = switch (RBTree.get(constants, Nat.compare, id)) {
+          case (?found) found;
+          case _ continue trimming;
+        };
+        expiries := KVL.getExpiries(constants_by_expiry, c.expires_at);
+        if (c.expires_at > env.now) {
+          expiries := RBTree.insert(expiries, Nat.compare, id, ());
+          constants_by_expiry := KVL.saveExpiries(constants_by_expiry, c.expires_at, expiries);
+          break trimming;
+        };
+        var user = getUser(c.owner);
+        var subacc = KVL.getSubacc(user, c.sub);
+        subacc := KVL.deleteConstant(subacc, id);
+        user := KVL.saveSubacc(user, c.sub, subacc);
+        saveUser(c.owner, user);
+
+        constants := RBTree.delete(constants, Nat.compare, id);
+
+        expiries := RBTree.delete(expiries, Nat.compare, id);
+        constants_by_expiry := KVL.saveExpiries(constants_by_expiry, c.expires_at, expiries);
+      };
+    };
     label trimming while (round < max_round) {
       let (p, arg) = switch (RBTree.minKey(deposit_dedupes)) {
         case (?found) found;
@@ -120,7 +165,33 @@ shared (install) persistent actor class Canister(
         case _ break trimming;
       };
     };
-    if (round <= max_round) ignore await* sendBlock();
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(constant_reserve_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
+        case (#less) constant_reserve_dedupes := RBTree.delete(constant_reserve_dedupes, KVL.dedupeConstReserve, (p, arg));
+        case _ break trimming;
+      };
+    };
+    label trimming while (round < max_round) {
+      let (p, arg) = switch (RBTree.minKey(constant_extend_dedupes)) {
+        case (?found) found;
+        case _ break trimming;
+      };
+      round += 1;
+      switch (OptionX.compare(arg.created_at, ?start_time, Nat64.compare)) {
+        case (#less) constant_extend_dedupes := RBTree.delete(constant_extend_dedupes, KVL.dedupeConstExtend, (p, arg));
+        case _ break trimming;
+      };
+    };
+  };
+
+  func asyncTrim(env : KVT.Environment) : async* () {
+    // todo: trim users
+    ignore await* sendBlock();
   };
   func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
     var max_batch = Value.getNat(meta, ArchiveT.MAX_UPDATE_BATCH_SIZE, 0);
@@ -271,12 +342,20 @@ shared (install) persistent actor class Canister(
     bal := KVL.incUnlock(bal, depo.amount);
     subacc := KVL.saveBalance(subacc, depo.token, bal);
     user := KVL.saveSubacc(user, sub, subacc);
+    var user_expiry = KVL.getUserExpiries(users_by_expiry, user.last_active);
+    user_expiry := RBTree.delete(user_expiry, Principal.compare, caller);
+    users_by_expiry := KVL.saveUserExpiries(users_by_expiry, user.last_active, user_expiry);
+    user := { user with last_active = env.now };
     saveUser(caller, user);
+
+    user_expiry := KVL.getUserExpiries(users_by_expiry, env.now);
+    user_expiry := RBTree.insert(user_expiry, Principal.compare, caller, ());
+    users_by_expiry := KVL.saveUserExpiries(users_by_expiry, env.now, user_expiry);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (depo.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, KVL.dedupe, (caller, depo), block_id);
     newBlock(block_id, KVL.valueTransfer("deposit", caller, sub, 0, depo, xfer_id, env.now, phash));
-    await* trim(env);
+    await* asyncTrim(env);
     #Ok block_id;
   };
 
@@ -358,7 +437,7 @@ shared (install) persistent actor class Canister(
     user := KVL.saveSubacc(user, sub, subacc);
     saveUser(env.fee_collector, user);
 
-    await* trim(env);
+    await* asyncTrim(env);
     #Ok block_id;
   };
 
@@ -410,7 +489,19 @@ shared (install) persistent actor class Canister(
       let (block_id, phash) = ArchiveL.getPhash(blocks);
       subacc := KVL.insertConstant(subacc, block_id);
       user := KVL.saveSubacc(user, sub, subacc);
+      var user_expiry = KVL.getUserExpiries(users_by_expiry, user.last_active);
+      user_expiry := RBTree.delete(user_expiry, Principal.compare, caller);
+      users_by_expiry := KVL.saveUserExpiries(users_by_expiry, user.last_active, user_expiry);
+      user := { user with last_active = env.now };
       saveUser(caller, user);
+
+      user_expiry := KVL.getUserExpiries(users_by_expiry, env.now);
+      user_expiry := RBTree.insert(user_expiry, Principal.compare, caller, ());
+      users_by_expiry := KVL.saveUserExpiries(users_by_expiry, env.now, user_expiry);
+
+      var constant_expiry = KVL.getExpiries(constants_by_expiry, constant.expires_at);
+      constant_expiry := RBTree.insert(constant_expiry, Nat.compare, block_id, ());
+      constants_by_expiry := KVL.saveExpiries(constants_by_expiry, constant.expires_at, constant_expiry);
 
       constants := RBTree.insert(constants, Nat.compare, block_id, constant);
       if (reserve.created_at != null) constant_reserve_dedupes := RBTree.insert(constant_reserve_dedupes, KVL.dedupeConstReserve, (caller, reserve), block_id);
@@ -425,7 +516,7 @@ shared (install) persistent actor class Canister(
       user := KVL.saveSubacc(user, sub, subacc);
       saveUser(env.fee_collector, user);
     };
-    await* trim(env);
+    await* asyncTrim(env);
     Buffer.toArray(res);
   };
 
@@ -482,10 +573,26 @@ shared (install) persistent actor class Canister(
       var bal = KVL.decUnlock(fee_ready.balance, fee_ready.amount);
       subacc := KVL.saveBalance(subacc, fee_ready.token, bal);
       user := KVL.saveSubacc(user, sub, subacc);
+      var user_expiry = KVL.getUserExpiries(users_by_expiry, user.last_active);
+      user_expiry := RBTree.delete(user_expiry, Principal.compare, caller);
+      users_by_expiry := KVL.saveUserExpiries(users_by_expiry, user.last_active, user_expiry);
+      user := { user with last_active = env.now };
       saveUser(caller, user);
+
+      user_expiry := KVL.getUserExpiries(users_by_expiry, env.now);
+      user_expiry := RBTree.insert(user_expiry, Principal.compare, caller, ());
+      users_by_expiry := KVL.saveUserExpiries(users_by_expiry, env.now, user_expiry);
+
+      var constant_expiry = KVL.getExpiries(constants_by_expiry, constant.expires_at);
+      constant_expiry := RBTree.delete(constant_expiry, Nat.compare, extend.id);
+      constants_by_expiry := KVL.saveExpiries(constants_by_expiry, constant.expires_at, constant_expiry);
 
       constant := KVL.extendConstant(constant, extend.duration);
       constants := RBTree.insert(constants, Nat.compare, extend.id, constant);
+
+      constant_expiry := KVL.getExpiries(constants_by_expiry, constant.expires_at);
+      constant_expiry := RBTree.insert(constant_expiry, Nat.compare, extend.id, ());
+      constants_by_expiry := KVL.saveExpiries(constants_by_expiry, constant.expires_at, constant_expiry);
 
       let (block_id, phash) = ArchiveL.getPhash(blocks);
       if (extend.created_at != null) constant_extend_dedupes := RBTree.insert(constant_extend_dedupes, KVL.dedupeConstExtend, (caller, extend), block_id);
@@ -507,23 +614,23 @@ shared (install) persistent actor class Canister(
       // user := KVL.saveBalance(user, fee_ready.p, bal);
       // saveUser(constant.owner, user);
     };
-    await* trim(env);
+    await* asyncTrim(env);
     Buffer.toArray(res);
   };
 
-  public shared ({ caller }) func variable_reserve() : async Result.Type<Nat, KVT.VariableReserveErr> {
-    Error.text("Not implemented yet");
-  };
+  // public shared ({ caller }) func variable_reserve() : async Result.Type<Nat, KVT.VariableReserveErr> {
+  //   Error.text("Not implemented yet");
+  // };
 
-  public shared ({ caller }) func variable_extend() : async Result.Type<Nat, KVT.VariableExtendErr> {
-    Error.text("Not implemented yet");
-  };
+  // public shared ({ caller }) func variable_extend() : async Result.Type<Nat, KVT.VariableExtendErr> {
+  //   Error.text("Not implemented yet");
+  // };
 
-  public shared ({ caller }) func variable_update() : async Result.Type<Nat, KVT.VariableUpdateErr> {
-    Error.text("Not implemented yet");
-  };
+  // public shared ({ caller }) func variable_update() : async Result.Type<Nat, KVT.VariableUpdateErr> {
+  //   Error.text("Not implemented yet");
+  // };
 
-  public shared ({ caller }) func variable_sponsor() : async Result.Type<Nat, KVT.VariableSponsorErr> {
-    Error.text("Not yet implemented");
-  };
+  // public shared ({ caller }) func variable_sponsor() : async Result.Type<Nat, KVT.VariableSponsorErr> {
+  //   Error.text("Not yet implemented");
+  // };
 };

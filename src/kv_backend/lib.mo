@@ -71,7 +71,7 @@ module {
       premium_pct;
     };
   };
-  public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u, Blob.compare, sub)) {
+  public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u.subs, Blob.compare, sub)) {
     case (?found) found;
     case _ ({
       balances = RBTree.empty();
@@ -79,7 +79,9 @@ module {
       variables = RBTree.empty();
     });
   };
-  public func saveSubacc(u : KVT.User, sub : Blob, s : KVT.Subacc) : KVT.User = if (RBTree.size(s.balances) > 0 or RBTree.size(s.constants) > 0 or RBTree.size(s.variables) > 0) RBTree.insert(u, Blob.compare, sub, s) else RBTree.delete(u, Blob.compare, sub);
+  public func saveSubacc(u : KVT.User, sub : Blob, s : KVT.Subacc) : KVT.User = {
+    u with subs = if (RBTree.size(s.balances) > 0 or RBTree.size(s.constants) > 0 or RBTree.size(s.variables) > 0) RBTree.insert(u.subs, Blob.compare, sub, s) else RBTree.delete(u.subs, Blob.compare, sub);
+  };
 
   public func insertConstant(s : KVT.Subacc, id : Nat) : KVT.Subacc = {
     s with constants = RBTree.insert(s.constants, Nat.compare, id, ())
@@ -95,6 +97,20 @@ module {
   public func saveBalance(s : KVT.Subacc, token : Principal, b : KVT.Balance) : KVT.Subacc = ({
     s with balances = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(s.balances, Principal.compare, token, b) else RBTree.delete(s.balances, Principal.compare, token);
   });
+  public func getUserExpiries(e : KVT.UserExpiries, t : Nat64) : KVT.Principals = switch (RBTree.get(e, Nat64.compare, t)) {
+    case (?found) found;
+    case _ RBTree.empty();
+  };
+  public func saveUserExpiries(e : KVT.UserExpiries, t : Nat64, ids : KVT.Principals) : KVT.UserExpiries = if (RBTree.size(ids) > 0) {
+    RBTree.insert(e, Nat64.compare, t, ids);
+  } else RBTree.delete(e, Nat64.compare, t);
+  public func getExpiries(e : KVT.Expiries, t : Nat64) : KVT.Nats = switch (RBTree.get(e, Nat64.compare, t)) {
+    case (?found) found;
+    case _ RBTree.empty();
+  };
+  public func saveExpiries(e : KVT.Expiries, t : Nat64, ids : KVT.Nats) : KVT.Expiries = if (RBTree.size(ids) > 0) {
+    RBTree.insert(e, Nat64.compare, t, ids);
+  } else RBTree.delete(e, Nat64.compare, t);
 
   public func dedupe((ap : Principal, a : KVT.TransferArg), (bp : Principal, b : KVT.TransferArg)) : Order.Order {
     switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
@@ -102,6 +118,10 @@ module {
       case other return other;
     };
     switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount))) {
       case (#equal) ();
       case other return other;
     };
@@ -263,27 +283,78 @@ module {
     c with expires_at = c.expires_at + t;
   });
 
-  public func dedupeConstReserve(a : (Principal, KVT.ConstantReserveArg), b : (Principal, KVT.ConstantReserveArg)) : Order.Order {
-    #equal // todo: finish this
+  func feeCompare(a : KVT.Fee, b : KVT.Fee) : Order.Order {
+    switch (Principal.compare(a.token, b.token)) {
+      case (#equal) ();
+      case other return other;
+    };
+    Nat.compare(a.amount, b.amount);
+  };
+  public func dedupeConstReserve((ap : Principal, a : KVT.ConstantReserveArg), (bp : Principal, b : KVT.ConstantReserveArg)) : Order.Order {
+    switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Text.compare(a.about, b.about)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Nat64.compare(a.duration, b.duration)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Option.compare(a.fee, b.fee, feeCompare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    Value.compare(a.value, b.value);
   };
 
-  public func dedupeConstExtend(a : (Principal, KVT.ConstantExtendArg), b : (Principal, KVT.ConstantExtendArg)) : Order.Order {
-    #equal // todo: finish this
+  public func dedupeConstExtend((ap : Principal, a : KVT.ConstantExtendArg), (bp : Principal, b : KVT.ConstantExtendArg)) : Order.Order {
+    switch (Option.compare(a.created_at, b.created_at, Nat64.compare)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Principal.compare(ap, bp)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Blob.compare(Subaccount.get(a.subaccount), Subaccount.get(b.subaccount))) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Nat.compare(a.id, b.id)) {
+      case (#equal) ();
+      case other return other;
+    };
+    switch (Nat64.compare(a.duration, b.duration)) {
+      case (#equal) ();
+      case other return other;
+    };
+    Option.compare(a.fee, b.fee, feeCompare);
   };
 
-  public func dedupeVarReserve(a : (Principal, KVT.VariableReserveArg), b : (Principal, KVT.VariableReserveArg)) : Order.Order {
-    #equal // todo: finish this
-  };
+  // public func dedupeVarReserve(a : (Principal, KVT.VariableReserveArg), b : (Principal, KVT.VariableReserveArg)) : Order.Order {
+  //   #equal // todo: finish this
+  // };
 
-  public func dedupeVarExtend(a : (Principal, KVT.VariableExtendArg), b : (Principal, KVT.VariableExtendArg)) : Order.Order {
-    #equal // todo: finish this
-  };
+  // public func dedupeVarExtend(a : (Principal, KVT.VariableExtendArg), b : (Principal, KVT.VariableExtendArg)) : Order.Order {
+  //   #equal // todo: finish this
+  // };
 
-  public func dedupeVarUpdate(a : (Principal, KVT.VariableUpdateArg), b : (Principal, KVT.VariableUpdateArg)) : Order.Order {
-    #equal // todo: finish this
-  };
+  // public func dedupeVarUpdate(a : (Principal, KVT.VariableUpdateArg), b : (Principal, KVT.VariableUpdateArg)) : Order.Order {
+  //   #equal // todo: finish this
+  // };
 
-  public func dedupeVarSponsor(a : (Principal, KVT.VariableSponsorArg), b : (Principal, KVT.VariableSponsorArg)) : Order.Order {
-    #equal // todo: finish this
-  };
+  // public func dedupeVarSponsor(a : (Principal, KVT.VariableSponsorArg), b : (Principal, KVT.VariableSponsorArg)) : Order.Order {
+  //   #equal // todo: finish this
+  // };
 };

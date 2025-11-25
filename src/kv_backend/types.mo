@@ -44,7 +44,7 @@ module {
   public type Constant = {
     owner : Principal;
     sub : Blob;
-    description : Text;
+    about : Text;
     value : Value.Type;
     expires_at : Nat64;
     created_at : Nat64;
@@ -52,7 +52,7 @@ module {
   public type Variable = {
     owner : Principal;
     sub : Blob;
-    description : Text;
+    about : Text;
     value : Value.Type;
     expires_at : Nat64;
     updated_at : Nat64;
@@ -96,7 +96,7 @@ module {
   public type Fee = { token : Principal; amount : Nat };
   public type ConstantReserveArg = {
     subaccount : ?Blob;
-    description : Text;
+    about : Text;
     value : Value.Type;
     duration : Nat64; // nano
     fee : ?Fee;

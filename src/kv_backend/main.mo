@@ -29,10 +29,28 @@ import CMC "../util/motoko/CMC/types";
 /*
 */
 shared (install) persistent actor class Canister(
-  // deploy : {
-  //   #Init : {};
-  //   #Upgrade;
-  // }
+  deploy : {
+    #Init : {
+      secs : {
+        tx_window : Nat;
+        permitted_drift : Nat;
+        min_duration : Nat;
+      };
+      max : {
+        take_value : Nat;
+        update_batch_size : Nat;
+        query_batch_size : Nat;
+      };
+      fee_collector : Principal;
+      withdrawal_fee_multiplier : Nat;
+      premium_percent : Nat;
+      archive : {
+        max_update_batch : Nat;
+        min_creation_tcycles : Nat;
+      };
+    };
+    #Upgrade;
+  }
 ) = Self {
   var meta : Value.Metadata = RBTree.empty();
   var users = RBTree.empty<Principal, KVT.User>();
@@ -50,9 +68,20 @@ shared (install) persistent actor class Canister(
   // var variable_update_dedupes = RBTree.empty<(Principal, KVT.VariableUpdateArg), Nat>();
   // var variable_sponsor_dedupes = RBTree.empty<(Principal, KVT.VariableSponsorArg), Nat>();
 
-  // switch deploy {
-
-  // }
+  switch deploy {
+    case (#Init i) {
+      meta := Value.setNat(meta, KVT.TX_WINDOW, ?i.secs.tx_window);
+      meta := Value.setNat(meta, KVT.TX_WINDOW, ?i.secs.permitted_drift);
+      meta := Value.setPrincipal(meta, KVT.TX_WINDOW, ?i.fee_collector);
+      meta := Value.setNat(meta, KVT.MAX_TAKE, ?i.max.take_value);
+      meta := Value.setNat(meta, KVT.MAX_UPDATE_BATCH, ?i.max.update_batch_size);
+      meta := Value.setNat(meta, KVT.MAX_QUERY_BATCH, ?i.max.query_batch_size);
+      meta := Value.setNat(meta, KVT.MIN_DURATION, ?i.secs.min_duration);
+      meta := Value.setNat(meta, KVT.WITHDRAWAL_FEE_MULTIPLIER, ?i.withdrawal_fee_multiplier);
+      meta := Value.setNat(meta, KVT.PREMIUM_PCT, ?i.premium_percent);
+    };
+    case _ ();
+  };
   var tip_cert = MerkleTree.empty();
   func updateTipCert() = CertifiedData.set(MerkleTree.treeHash(tip_cert)); // also call this on deploy.init
   system func postupgrade() = updateTipCert(); // https://gist.github.com/nomeata/f325fcd2a6692df06e38adedf9ca1877

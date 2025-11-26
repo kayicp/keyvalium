@@ -7,17 +7,17 @@ import CMC "../util/motoko/CMC/types";
 import ICRC1 "../icrc1_canister/main";
 
 module {
-  public let AVAILABLE = "kv:available";
-  public let TX_WINDOW = "vault:tx_window";
-  public let PERMITTED_DRIFT = "vault:permitted_drift";
-  public let FEE_COLLECTOR = "kv:fee_collector";
-  public let MAX_TAKE = "kv:max_take_value";
-  public let MAX_UPDATE_BATCH = "kv:max_update_batch_size";
-  public let MAX_QUERY_BATCH = "kv:max_query_batch_size";
-  public let MIN_DURATION = "kv:min_duration";
-  public let WITHDRAWAL_FEE_MULTIPLIER = "kv:withdrawal_fee_multiplier";
-  // public let OWNER_FEE_PCT = "kv:owner_fee_percent";
-  public let PREMIUM_PCT = "kv:premium_percent";
+  public let AVAILABLE = "echo:available";
+  public let TX_WINDOW = "echo:tx_window";
+  public let PERMITTED_DRIFT = "echo:permitted_drift";
+  public let FEE_COLLECTOR = "echo:fee_collector";
+  public let MAX_TAKE = "echo:max_take_value";
+  public let MAX_UPDATE_BATCH = "echo:max_update_batch_size";
+  public let MAX_QUERY_BATCH = "echo:max_query_batch_size";
+  public let MIN_DURATION = "echo:min_duration";
+  public let WITHDRAWAL_FEE_MULTIPLIER = "echo:withdrawal_fee_multiplier";
+  // public let OWNER_FEE_PCT = "echo:owner_fee_percent";
+  public let PREMIUM_PCT = "echo:premium_percent";
 
   public type ArgType = {
     #Deposit : TransferArg;

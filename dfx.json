@@ -11,6 +11,14 @@
       "type": "custom",
       "wasm": "https://github.com/dfinity/internet-identity/releases/latest/download/internet_identity_dev.wasm.gz"
     },
+    "icp_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
+    "tcycles_token": {
+      "main": "src/icrc1_canister/main.mo",
+      "type": "motoko"
+    },
     "kv_backend": {
       "main": "src/kv_backend/main.mo",
       "type": "motoko"

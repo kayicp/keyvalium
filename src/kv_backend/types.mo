@@ -63,7 +63,7 @@ module {
   };
   public type Balance = { unlocked : Nat; locked : Nat };
   public type Subacc = {
-    last_active : Nat64;
+    // last_active : Nat64;
     balances : RBTree.Type<Principal, Balance>;
     constants : RBTree.Type<Nat, ()>;
     variables : RBTree.Type<Nat, ()>;

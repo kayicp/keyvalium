@@ -36,7 +36,7 @@ shared (install) persistent actor class Canister(
 ) = Self {
   var meta : Value.Metadata = RBTree.empty();
   var users = RBTree.empty<Principal, KVT.User>();
-  var users_by_last : KVT.UserExpiries = RBTree.empty();
+  // var users_by_last : KVT.UserExpiries = RBTree.empty();
   var constants = RBTree.empty<Nat, KVT.Constant>();
   var constants_by_expiry = RBTree.empty<Nat64, KVT.Nats>();
   // var variables = RBTree.empty<Nat, KVT.Variable>();
@@ -185,60 +185,60 @@ shared (install) persistent actor class Canister(
       };
     };
   };
-  func asyncTrim(env : KVT.Environment) : async* () {
-    var round = 0;
-    var max_round = 10;
-    let trim_time = env.now - env.min_duration;
-    label trimming while (round < max_round) {
-      let (exp_t, exp_ps) = switch (RBTree.min(users_by_last)) {
-        case (?found) found;
-        case _ break trimming;
-      };
-      if (exp_t > trim_time) break trimming;
-      while (round < max_round) {
-        round += 1;
-        let (p, exp_subs) = switch (RBTree.min(exp_ps)) {
-          case (?found) found;
-          case _ {
-            users_by_last := RBTree.delete(users_by_last, Nat64.compare, exp_t);
-            continue trimming;
-          };
-        };
-        while (round < max_round) {
-          let sub = switch (RBTree.minKey(exp_subs)) {
-            case (?found) found;
-            case _ {
-              let missing = RBTree.delete(exp_ps, Principal.compare, p);
-              users_by_last := KVL.saveUserLast(users_by_last, exp_t, missing);
-              continue trimming;
-            };
-          };
-          var subs_exp = RBTree.delete(exp_subs, Blob.compare, sub); // checked
-          var subs_ps = KVL.saveSubLast(exp_ps, p, subs_exp);
-          users_by_last := KVL.saveUserLast(users_by_last, exp_t, subs_ps);
-          var u = getUser(p);
-          var subacc = switch (RBTree.get(u, Blob.compare, sub)) {
-            case (?found) found;
-            case _ continue trimming;
-          };
-          subs_ps := KVL.getUserLast(users_by_last, subacc.last_active);
-          subs_exp := KVL.getSubLast(subs_ps, p);
-          if (subacc.last_active > trim_time) {
-            subs_exp := RBTree.insert(subs_exp, Blob.compare, sub, ());
-            subs_ps := KVL.saveSubLast(subs_ps, p, subs_exp);
-            users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, subs_ps);
-            break trimming;
-          };
-          // todo: auto extend or
-          // if (RBTree.size(subacc.constants) > 0 and RBTree.size(subacc.variables) > 0) {
+  // func asyncTrim(env : KVT.Environment) : async* () {
+  //   var round = 0;
+  //   var max_round = 10;
+  //   let trim_time = env.now - env.min_duration;
+  //   label trimming while (round < max_round) {
+  //     let (exp_t, exp_ps) = switch (RBTree.min(users_by_last)) {
+  //       case (?found) found;
+  //       case _ break trimming;
+  //     };
+  //     if (exp_t > trim_time) break trimming;
+  //     while (round < max_round) {
+  //       round += 1;
+  //       let (p, exp_subs) = switch (RBTree.min(exp_ps)) {
+  //         case (?found) found;
+  //         case _ {
+  //           users_by_last := RBTree.delete(users_by_last, Nat64.compare, exp_t);
+  //           continue trimming;
+  //         };
+  //       };
+  //       while (round < max_round) {
+  //         let sub = switch (RBTree.minKey(exp_subs)) {
+  //           case (?found) found;
+  //           case _ {
+  //             let missing = RBTree.delete(exp_ps, Principal.compare, p);
+  //             users_by_last := KVL.saveUserLast(users_by_last, exp_t, missing);
+  //             continue trimming;
+  //           };
+  //         };
+  //         var subs_exp = RBTree.delete(exp_subs, Blob.compare, sub); // checked
+  //         var subs_ps = KVL.saveSubLast(exp_ps, p, subs_exp);
+  //         users_by_last := KVL.saveUserLast(users_by_last, exp_t, subs_ps);
+  //         var u = getUser(p);
+  //         var subacc = switch (RBTree.get(u, Blob.compare, sub)) {
+  //           case (?found) found;
+  //           case _ continue trimming;
+  //         };
+  //         subs_ps := KVL.getUserLast(users_by_last, subacc.last_active);
+  //         subs_exp := KVL.getSubLast(subs_ps, p);
+  //         if (subacc.last_active > trim_time) {
+  //           subs_exp := RBTree.insert(subs_exp, Blob.compare, sub, ());
+  //           subs_ps := KVL.saveSubLast(subs_ps, p, subs_exp);
+  //           users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, subs_ps);
+  //           break trimming;
+  //         };
+  //         // todo: auto extend or
+  //         // if (RBTree.size(subacc.constants) > 0 or RBTree.size(subacc.variables) > 0) {
 
-          //   break trimming;
-          // };
-        };
-      };
-    };
-    ignore await* sendBlock();
-  };
+  //         //   break trimming;
+  //         // };
+  //       };
+  //     };
+  //   };
+  //   ignore await* sendBlock();
+  // };
   func sendBlock() : async* Result.Type<(), { #Sync : Error.Generic; #Async : Error.Generic }> {
     var max_batch = Value.getNat(meta, ArchiveT.MAX_UPDATE_BATCH_SIZE, 0);
     if (max_batch == 0) max_batch := 1;
@@ -389,26 +389,27 @@ shared (install) persistent actor class Canister(
     bal := KVL.incUnlock(bal, depo.amount);
     subacc := KVL.saveBalance(subacc, depo.token, bal);
 
-    var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
-    var sub_expiry = KVL.getSubLast(user_expiry, caller);
-    sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
-    user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-    users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
+    // var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
+    // var sub_expiry = KVL.getSubLast(user_expiry, caller);
+    // sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
+    // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+    // users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
 
-    subacc := KVL.setSubLast(subacc, env.now);
+    // subacc := KVL.setSubLast(subacc, env.now);
     user := KVL.saveSubacc(user, sub, subacc);
     saveUser(caller, user);
 
-    user_expiry := KVL.getUserLast(users_by_last, env.now);
-    sub_expiry := KVL.getSubLast(user_expiry, caller);
-    sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
-    user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-    users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
+    // user_expiry := KVL.getUserLast(users_by_last, env.now);
+    // sub_expiry := KVL.getSubLast(user_expiry, caller);
+    // sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
+    // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+    // users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
 
     let (block_id, phash) = ArchiveL.getPhash(blocks);
     if (depo.created_at != null) deposit_dedupes := RBTree.insert(deposit_dedupes, KVL.dedupe, (caller, depo), block_id);
     newBlock(block_id, KVL.valueTransfer("deposit", caller, sub, 0, depo, xfer_id, env.now, phash));
-    await* asyncTrim(env);
+    // await* asyncTrim(env);
+    ignore await* sendBlock();
     #Ok block_id;
   };
 
@@ -491,7 +492,8 @@ shared (install) persistent actor class Canister(
     user := KVL.saveSubacc(user, sub, subacc);
     saveUser(env.fee_collector, user);
 
-    await* asyncTrim(env);
+    // await* asyncTrim(env);
+    ignore await* sendBlock();
     #Ok block_id;
   };
 
@@ -543,21 +545,21 @@ shared (install) persistent actor class Canister(
       subacc := KVL.saveBalance(subacc, fee_ready.token, bal);
       let (block_id, phash) = ArchiveL.getPhash(blocks);
       subacc := KVL.insertConstant(subacc, block_id);
-      var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
-      var sub_expiry = KVL.getSubLast(user_expiry, caller);
-      sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
-      user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-      users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
+      // var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
+      // var sub_expiry = KVL.getSubLast(user_expiry, caller);
+      // sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
+      // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+      // users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
 
-      subacc := KVL.setSubLast(subacc, env.now);
+      // subacc := KVL.setSubLast(subacc, env.now);
       user := KVL.saveSubacc(user, sub, subacc);
       saveUser(caller, user);
 
-      user_expiry := KVL.getUserLast(users_by_last, env.now);
-      sub_expiry := KVL.getSubLast(user_expiry, caller);
-      sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
-      user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-      users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
+      // user_expiry := KVL.getUserLast(users_by_last, env.now);
+      // sub_expiry := KVL.getSubLast(user_expiry, caller);
+      // sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
+      // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+      // users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
 
       var constant_expiry = KVL.getExpiries(constants_by_expiry, constant.expires_at);
       constant_expiry := RBTree.insert(constant_expiry, Nat.compare, block_id, ());
@@ -576,7 +578,8 @@ shared (install) persistent actor class Canister(
       user := KVL.saveSubacc(user, sub, subacc);
       saveUser(env.fee_collector, user);
     };
-    await* asyncTrim(env);
+    // await* asyncTrim(env);
+    ignore await* sendBlock();
     Buffer.toArray(res);
   };
 
@@ -633,21 +636,21 @@ shared (install) persistent actor class Canister(
       };
       var bal = KVL.decUnlock(fee_ready.balance, fee_ready.amount);
       subacc := KVL.saveBalance(subacc, fee_ready.token, bal);
-      var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
-      var sub_expiry = KVL.getSubLast(user_expiry, caller);
-      sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
-      user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-      users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
+      // var user_expiry = KVL.getUserLast(users_by_last, subacc.last_active);
+      // var sub_expiry = KVL.getSubLast(user_expiry, caller);
+      // sub_expiry := RBTree.delete(sub_expiry, Blob.compare, sub);
+      // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+      // users_by_last := KVL.saveUserLast(users_by_last, subacc.last_active, user_expiry);
 
-      subacc := KVL.setSubLast(subacc, env.now);
+      // subacc := KVL.setSubLast(subacc, env.now);
       user := KVL.saveSubacc(user, sub, subacc);
       saveUser(caller, user);
 
-      user_expiry := KVL.getUserLast(users_by_last, env.now);
-      sub_expiry := KVL.getSubLast(user_expiry, caller);
-      sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
-      user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
-      users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
+      // user_expiry := KVL.getUserLast(users_by_last, env.now);
+      // sub_expiry := KVL.getSubLast(user_expiry, caller);
+      // sub_expiry := RBTree.insert(sub_expiry, Blob.compare, sub, ());
+      // user_expiry := KVL.saveSubLast(user_expiry, caller, sub_expiry);
+      // users_by_last := KVL.saveUserLast(users_by_last, env.now, user_expiry);
 
       var constant_expiry = KVL.getExpiries(constants_by_expiry, constant.expires_at);
       constant_expiry := RBTree.delete(constant_expiry, Nat.compare, extend.id);
@@ -680,7 +683,8 @@ shared (install) persistent actor class Canister(
       // user := KVL.saveBalance(user, fee_ready.p, bal);
       // saveUser(constant.owner, user);
     };
-    await* asyncTrim(env);
+    // await* asyncTrim(env);
+    ignore await* sendBlock();
     Buffer.toArray(res);
   };
 

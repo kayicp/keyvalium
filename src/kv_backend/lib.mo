@@ -71,17 +71,16 @@ module {
       premium_pct;
     };
   };
-  public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u.subs, Blob.compare, sub)) {
+  public func getSubacc(u : KVT.User, sub : Blob) : KVT.Subacc = switch (RBTree.get(u, Blob.compare, sub)) {
     case (?found) found;
     case _ ({
+      last_active = 0;
       balances = RBTree.empty();
       constants = RBTree.empty();
       variables = RBTree.empty();
     });
   };
-  public func saveSubacc(u : KVT.User, sub : Blob, s : KVT.Subacc) : KVT.User = {
-    u with subs = if (RBTree.size(s.balances) > 0 or RBTree.size(s.constants) > 0 or RBTree.size(s.variables) > 0) RBTree.insert(u.subs, Blob.compare, sub, s) else RBTree.delete(u.subs, Blob.compare, sub);
-  };
+  public func saveSubacc(u : KVT.User, sub : Blob, s : KVT.Subacc) : KVT.User = if (RBTree.size(s.balances) > 0 or RBTree.size(s.constants) > 0 or RBTree.size(s.variables) > 0) RBTree.insert(u, Blob.compare, sub, s) else RBTree.delete(u, Blob.compare, sub);
 
   public func insertConstant(s : KVT.Subacc, id : Nat) : KVT.Subacc = {
     s with constants = RBTree.insert(s.constants, Nat.compare, id, ())
@@ -97,13 +96,23 @@ module {
   public func saveBalance(s : KVT.Subacc, token : Principal, b : KVT.Balance) : KVT.Subacc = ({
     s with balances = if (b.unlocked > 0 or b.locked > 0) RBTree.insert(s.balances, Principal.compare, token, b) else RBTree.delete(s.balances, Principal.compare, token);
   });
-  public func getUserExpiries(e : KVT.UserExpiries, t : Nat64) : KVT.Principals = switch (RBTree.get(e, Nat64.compare, t)) {
+  public func getUserLast(e : KVT.UserExpiries, t : Nat64) : KVT.Accounts = switch (RBTree.get(e, Nat64.compare, t)) {
     case (?found) found;
     case _ RBTree.empty();
   };
-  public func saveUserExpiries(e : KVT.UserExpiries, t : Nat64, ids : KVT.Principals) : KVT.UserExpiries = if (RBTree.size(ids) > 0) {
+  public func saveUserLast(e : KVT.UserExpiries, t : Nat64, ids : KVT.Accounts) : KVT.UserExpiries = if (RBTree.size(ids) > 0) {
     RBTree.insert(e, Nat64.compare, t, ids);
   } else RBTree.delete(e, Nat64.compare, t);
+
+  public func getSubLast(a : KVT.Accounts, p : Principal) : RBTree.Type<Blob, ()> = switch (RBTree.get(a, Principal.compare, p)) {
+    case (?found) found;
+    case _ RBTree.empty();
+  };
+  public func setSubLast(s : KVT.Subacc, now : Nat64) : KVT.Subacc = {
+    s with last_active = now
+  };
+  public func saveSubLast(a : KVT.Accounts, p : Principal, bs : RBTree.Type<Blob, ()>) : KVT.Accounts = if (RBTree.size(bs) > 0) RBTree.insert(a, Principal.compare, p, bs) else RBTree.delete(a, Principal.compare, p);
+
   public func getExpiries(e : KVT.Expiries, t : Nat64) : KVT.Nats = switch (RBTree.get(e, Nat64.compare, t)) {
     case (?found) found;
     case _ RBTree.empty();

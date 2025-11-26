@@ -63,14 +63,12 @@ module {
   };
   public type Balance = { unlocked : Nat; locked : Nat };
   public type Subacc = {
+    last_active : Nat64;
     balances : RBTree.Type<Principal, Balance>;
     constants : RBTree.Type<Nat, ()>;
     variables : RBTree.Type<Nat, ()>;
   };
-  public type User = {
-    last_active : Nat64;
-    subs : RBTree.Type<Blob, Subacc>;
-  };
+  public type User = RBTree.Type<Blob, Subacc>;
   public type TransferArg = {
     subaccount : ?Blob;
     token : Principal;
@@ -137,8 +135,8 @@ module {
   };
   public type Nats = RBTree.Type<Nat, ()>;
   public type Expiries = RBTree.Type<Nat64, (orders : Nats)>;
-  public type Principals = RBTree.Type<Principal, ()>;
-  public type UserExpiries = RBTree.Type<Nat64, Principals>;
+  public type Accounts = RBTree.Type<Principal, RBTree.Type<Blob, ()>>;
+  public type UserExpiries = RBTree.Type<Nat64, Accounts>;
   // public type VariableReserveArg = {
 
   // };

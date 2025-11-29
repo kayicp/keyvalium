@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "setup": "npm i && dfx canister create kv_backend && dfx generate kv_backend && dfx deploy",
+    "setup": "npm i && dfx canister create shelf_backend && dfx generate shelf_backend && dfx deploy",
     "start": "vite --port 3000",
     "prebuild": "dfx generate",
     "build": "tsc && vite build",
@@ -21,9 +21,11 @@
     "vitest": "^2.0.5"
   },
   "dependencies": {
-    "@dfinity/agent": "^3.0.0",
-    "@dfinity/candid": "^3.0.0",
-    "@dfinity/principal": "^3.0.0",
-    "lit-html": "^2.8.0"
+    "@dfinity/agent": "^3.3.1",
+    "@dfinity/auth-client": "^3.3.1",
+    "@dfinity/candid": "^3.3.1",
+    "@dfinity/principal": "^3.3.1",
+    "@dfinity/ledger-icp": "^6.1.2",
+    "lit-html": "^3.3.1"
   }
 }

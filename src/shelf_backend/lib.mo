@@ -18,6 +18,8 @@ module {
   public func newConstant(owner : Principal, sub : Blob, arg : KVT.ConstantReserveArg, now : Nat64) : KVT.Constant = ({
     arg with expires_at = now + arg.duration;
     created_at = now;
+    update_credits = 0;
+    updated_at = 0 : Nat64;
     owner;
     sub;
   });

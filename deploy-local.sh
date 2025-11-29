@@ -66,24 +66,22 @@ dfx deploy tcycles_token --no-wallet --specified-id $TCYCLES_ID --argument "(
   },
 )"
 
-dfx deploy kv_backend --no-wallet --argument "(
+dfx deploy shelf_backend --no-wallet --argument "(
   variant {
     Init = record {
-      main = record {
-				secs = record {
-					tx_window = 3_600 : nat;
-					permitted_drift = 60 : nat;
-					min_duration = 3600 : nat;
-				};
-				max = record {
-					take_value = 100 : nat;
-					update_batch_size = 100 : nat;
-					query_batch_size = 100 : nat;
-				};
-				fee_collector = principal \"$DEFAULT_PRINCIPAL\";
-				withdrawal_fee_multiplier = 3 : nat;
-				premium_percent = 200 : nat;
-      };
+			secs = record {
+				tx_window = 3_600 : nat;
+				permitted_drift = 60 : nat;
+				min_duration = 3600 : nat;
+			};
+			max = record {
+				take_value = 100 : nat;
+				update_batch_size = 100 : nat;
+				query_batch_size = 100 : nat;
+			};
+			fee_collector = principal \"$DEFAULT_PRINCIPAL\";
+			withdrawal_fee_multiplier = 3 : nat;
+			premium_percent = 200 : nat;
       archive = record {
         min_creation_tcycles = 4 : nat;
         max_update_batch = 10 : nat;
@@ -92,7 +90,7 @@ dfx deploy kv_backend --no-wallet --argument "(
   },
 )"
 
-dfx deploy frontend_canister --no-wallet
+dfx deploy frontend --no-wallet
 
 # dfx ledger fabricate-cycles --canister <canister_name> --t 8
 

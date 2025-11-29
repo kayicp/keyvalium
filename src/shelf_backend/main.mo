@@ -71,8 +71,8 @@ shared (install) persistent actor class Canister(
   switch deploy {
     case (#Init i) {
       meta := Value.setNat(meta, KVT.TX_WINDOW, ?i.secs.tx_window);
-      meta := Value.setNat(meta, KVT.TX_WINDOW, ?i.secs.permitted_drift);
-      meta := Value.setPrincipal(meta, KVT.TX_WINDOW, ?i.fee_collector);
+      meta := Value.setNat(meta, KVT.PERMITTED_DRIFT, ?i.secs.permitted_drift);
+      meta := Value.setPrincipal(meta, KVT.FEE_COLLECTOR, ?i.fee_collector);
       meta := Value.setNat(meta, KVT.MAX_TAKE, ?i.max.take_value);
       meta := Value.setNat(meta, KVT.MAX_UPDATE_BATCH, ?i.max.update_batch_size);
       meta := Value.setNat(meta, KVT.MAX_QUERY_BATCH, ?i.max.query_batch_size);
@@ -365,7 +365,7 @@ shared (install) persistent actor class Canister(
       #Ok(Principal.fromActor(new_canister));
     } catch e #Err(Error.convert(e));
   };
-  public shared ({ caller }) func vault_deposit(depo : KVT.TransferArg) : async Result.Type<Nat, KVT.DepositError> {
+  public shared ({ caller }) func shelf_deposit(depo : KVT.TransferArg) : async Result.Type<Nat, KVT.DepositError> {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = depo.subaccount };
@@ -442,7 +442,7 @@ shared (install) persistent actor class Canister(
     #Ok block_id;
   };
 
-  public shared ({ caller }) func vault_withdraw(draw : KVT.TransferArg) : async Result.Type<Nat, KVT.WithdrawError> {
+  public shared ({ caller }) func shelf_withdraw(draw : KVT.TransferArg) : async Result.Type<Nat, KVT.WithdrawError> {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return Error.text("Unavailable");
 
     let user_acct = { owner = caller; subaccount = draw.subaccount };
@@ -526,7 +526,7 @@ shared (install) persistent actor class Canister(
     #Ok block_id;
   };
 
-  public shared ({ caller }) func constant_reserve(reserves : [KVT.ConstantReserveArg]) : async [Result.Type<Nat, KVT.ConstantReserveErr>] {
+  public shared ({ caller }) func shelf_reserve(reserves : [KVT.ConstantReserveArg]) : async [Result.Type<Nat, KVT.ConstantReserveErr>] {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return [Error.textBatch("Unavailable")];
     if (not ICRC1L.validatePrincipal(caller)) return [Error.textBatch("Caller must not be Anonymous or Management")];
 
@@ -612,7 +612,7 @@ shared (install) persistent actor class Canister(
     Buffer.toArray(res);
   };
 
-  public shared ({ caller }) func constant_extend(extends : [KVT.ConstantExtendArg]) : async [Result.Type<Nat, KVT.ConstantExtendErr>] {
+  public shared ({ caller }) func shelf_extend(extends : [KVT.ConstantExtendArg]) : async [Result.Type<Nat, KVT.ConstantExtendErr>] {
     if (not Value.getBool(meta, KVT.AVAILABLE, true)) return [Error.textBatch("Unavailable")];
     // let user_acct = { owner = caller; subaccount = null };
     if (not ICRC1L.validatePrincipal(caller)) return [Error.textBatch("Caller must not be Anonymous or Management")];
@@ -715,6 +715,37 @@ shared (install) persistent actor class Canister(
     // await* asyncTrim(env);
     ignore await* sendBlock();
     Buffer.toArray(res);
+  };
+
+  public shared query func shelf_unlocked_balances_of(accounts : [ICRC1T.Account]) : async [Nat] {
+    [];
+  };
+  public shared query func shelf_locked_balances_of(accounts : [ICRC1T.Account]) : async [Nat] {
+    [];
+  };
+
+  public shared query func shelf_min_duration() : async ?Nat64 = async switch (Value.metaNat(meta, KVT.MIN_DURATION)) {
+    case (?found) ?Nat64.fromNat(found);
+    case _ null;
+  };
+  public shared query func shelf_ids_by_newest(account : ?ICRC1T.Account, prev : ?Nat, take : ?Nat) : async [Nat] {
+    [];
+  }; // add oldest and by expires_at too
+
+  public shared query func shelf_abouts_of(ids : [Nat]) : async [Text] {
+    [];
+  };
+
+  public shared query func shelf_values_of(ids : [Nat]) : async [Value.Type] {
+    [];
+  };
+
+  public shared query func shelf_expiry_times_of(ids : [Nat]) : async [Nat64] {
+    [];
+  };
+
+  public shared query func shelf_timestamps_of(ids : [Nat]) : async [Nat64] {
+    [];
   };
 
   // public shared ({ caller }) func variable_reserve() : async Result.Type<Nat, KVT.VariableReserveErr> {
